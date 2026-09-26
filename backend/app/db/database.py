@@ -9,8 +9,10 @@ Provides:
 """
 
 import logging
+import re
 from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorDatabase
 from pymongo import IndexModel, ASCENDING, DESCENDING
+from pymongo.errors import ServerSelectionTimeoutError, ConfigurationError
 from app.core.config import get_settings
 
 logger = logging.getLogger(__name__)
@@ -19,6 +21,13 @@ settings = get_settings()
 # Module-level client and db — initialized in lifespan
 _client: AsyncIOMotorClient | None = None
 _db: AsyncIOMotorDatabase | None = None
+
+
+def _mask_uri(uri: str) -> str:
+    """Mask credentials in a MongoDB URI for safe logging."""
+    # Replace mongodb+srv://user:pass@ with mongodb+srv://***:***@
+    masked = re.sub(r"(mongodb(?:\+srv)?://)([^:]+):([^@]+)@", r"\1***:***@", uri)
+    return masked
 
 
 def get_client() -> AsyncIOMotorClient:
@@ -36,13 +45,59 @@ def get_database() -> AsyncIOMotorDatabase:
 async def connect_db() -> None:
     """Connect to MongoDB and create indexes."""
     global _client, _db
-    logger.info("Connecting to MongoDB at %s / %s", settings.mongodb_uri, settings.mongodb_db_name)
-    _client = AsyncIOMotorClient(settings.mongodb_uri)
+
+    masked_uri = _mask_uri(settings.mongodb_uri)
+    logger.info("Connecting to MongoDB — URI: %s  DB: %s", masked_uri, settings.mongodb_db_name)
+
+    _client = AsyncIOMotorClient(
+        settings.mongodb_uri,
+        serverSelectionTimeoutMS=20_000,
+    )
     _db = _client[settings.mongodb_db_name]
 
-    # Verify connection — Motor's proper async ping
-    await _client.server_info()
-    logger.info("MongoDB connected successfully")
+    # Verify connection — use Motor's native async ping command
+    try:
+        await _db.command("ping")
+        logger.info("MongoDB connected successfully to database '%s'", settings.mongodb_db_name)
+    except ServerSelectionTimeoutError as e:
+        error_str = str(e)
+        # Diagnose the most common causes and give actionable messages
+        if "TLSV1_ALERT_INTERNAL_ERROR" in error_str or "SSL handshake failed" in error_str:
+            logger.error(
+                "MongoDB TLS/SSL handshake FAILED — this is almost always caused by one of:\n"
+                "  1. Your IP address is NOT in the MongoDB Atlas Network Access allowlist.\n"
+                "     Go to: Atlas → Network Access → Add IP Address → add your current IP.\n"
+                "     For development: allow 0.0.0.0/0 (all IPs).\n"
+                "  2. The MongoDB Atlas cluster is paused or deleted.\n"
+                "  3. A firewall/antivirus is intercepting TLS traffic on port 27017.\n"
+                "Connection string (masked): %s",
+                masked_uri,
+            )
+        elif "Authentication failed" in error_str:
+            logger.error(
+                "MongoDB authentication FAILED — check your MONGODB_URI username and password.\n"
+                "Connection string (masked): %s",
+                masked_uri,
+            )
+        elif "getaddrinfo failed" in error_str or "nodename nor servname" in error_str:
+            logger.error(
+                "MongoDB DNS resolution FAILED — cannot resolve the hostname.\n"
+                "Check network connectivity and your MONGODB_URI hostname.\n"
+                "Connection string (masked): %s",
+                masked_uri,
+            )
+        else:
+            logger.error(
+                "MongoDB connection FAILED — ServerSelectionTimeoutError.\n"
+                "Connection string (masked): %s\n"
+                "Error: %s",
+                masked_uri,
+                error_str[:300],
+            )
+        _client.close()
+        _client = None
+        _db = None
+        raise
 
     # Create indexes
     await _create_indexes(_db)
