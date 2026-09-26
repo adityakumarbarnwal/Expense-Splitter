@@ -2,10 +2,11 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { Plus, Trash2, Sparkles, ChevronDown, ChevronUp } from 'lucide-react';
 import toast from 'react-hot-toast';
-import { groupsApi, expensesApi, aiApi } from '../services/api';
+import { groupsApi, expensesApi } from '../services/api';
 import { LoadingSpinner, ErrorMessage, EmptyState } from '../components/common/UI';
 import AIConfirmationCard from '../components/ai/AIConfirmationCard';
 import NaturalLanguageInput from '../components/ai/NaturalLanguageInput';
+import { useAuth } from '../contexts/AuthContext';
 
 function formatCurrency(amount) {
   return `₹${Number(amount).toFixed(2)}`;
@@ -19,20 +20,20 @@ function formatDate(dateStr) {
 
 export default function ExpensesPage() {
   const { groupId } = useParams();
+  const { user } = useAuth();
   const [group, setGroup] = useState(null);
   const [expenses, setExpenses] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
-  // Manual form state
+  // UI state
   const [showManualForm, setShowManualForm] = useState(false);
   const [showAIInput, setShowAIInput] = useState(false);
-
-  // AI confirmation state
   const [aiResult, setAIResult] = useState(null);
   const [aiOriginalText, setAIOriginalText] = useState('');
+  const [aiWarnings, setAIWarnings] = useState([]);
 
-  // Manual form fields
+  // Form state — payer_id and participant_ids use MongoDB user ID strings
   const [formData, setFormData] = useState({
     description: '', amount: '', payer_id: '', participant_ids: [], note: '',
   });
@@ -55,6 +56,21 @@ export default function ExpensesPage() {
   }, [groupId]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
+
+  // Pre-select current user as payer when opening manual form
+  const openManualForm = () => {
+    const currentMember = group?.members?.find((m) => m.id === user?.id);
+    setFormData({
+      description: '',
+      amount: '',
+      payer_id: currentMember?.id || '',
+      participant_ids: group?.members?.map((m) => m.id) || [],
+      note: '',
+    });
+    setShowManualForm(true);
+    setShowAIInput(false);
+    setAIResult(null);
+  };
 
   const handleParticipantToggle = (memberId) => {
     setFormData((prev) => {
@@ -91,28 +107,32 @@ export default function ExpensesPage() {
     await handleSubmitExpense({
       description: formData.description,
       amount: parseFloat(formData.amount),
-      payer_id: parseInt(formData.payer_id),
-      participant_ids: formData.participant_ids,
+      payer_id: formData.payer_id, // MongoDB ObjectId string
+      participant_ids: formData.participant_ids, // Array of MongoDB ObjectId strings
       note: formData.note || null,
     });
   };
 
-  const handleAIParsed = (result, originalText) => {
+  const handleAIParsed = (result, originalText, warnings = []) => {
     setAIResult(result);
     setAIOriginalText(originalText);
+    setAIWarnings(warnings);
     setShowAIInput(false);
   };
 
   const handleAIConfirm = async (confirmedData) => {
-    // Convert member names to IDs
-    const memberMap = Object.fromEntries(group.members.map((m) => [m.name, m.id]));
-    const payerId = memberMap[confirmedData.payer_name];
-    const participantIds = confirmedData.participant_names
-      .map((name) => memberMap[name])
+    // Map member names → MongoDB user IDs
+    const memberByName = Object.fromEntries(
+      (group?.members || []).map((m) => [m.name.toLowerCase(), m.id])
+    );
+
+    const payerId = memberByName[confirmedData.payer_name?.toLowerCase()];
+    const participantIds = (confirmedData.participant_names || [])
+      .map((name) => memberByName[name.toLowerCase()])
       .filter(Boolean);
 
     if (!payerId) {
-      toast.error('Could not resolve payer. Please use manual entry.');
+      toast.error(`Payer "${confirmedData.payer_name}" not found in group. Please use manual entry.`);
       return;
     }
     if (participantIds.length === 0) {
@@ -132,7 +152,7 @@ export default function ExpensesPage() {
   const handleDeleteExpense = async (expense) => {
     if (!window.confirm(`Delete "${expense.description}"?`)) return;
     try {
-      await expensesApi.delete(groupId, expense.id);
+      await expensesApi.delete(expense.id);
       toast.success('Expense deleted');
       fetchData();
     } catch (err) {
@@ -149,7 +169,7 @@ export default function ExpensesPage() {
     <div>
       {/* Breadcrumb */}
       <div className="text-sm text-gray-500 mb-6">
-        <Link to="/" className="hover:text-blue-600">Groups</Link>
+        <Link to="/groups" className="hover:text-blue-600">Groups</Link>
         <span className="mx-2">/</span>
         <Link to={`/groups/${groupId}`} className="hover:text-blue-600">{group?.name}</Link>
         <span className="mx-2">/</span>
@@ -167,7 +187,7 @@ export default function ExpensesPage() {
             AI Entry
           </button>
           <button
-            onClick={() => { setShowManualForm(!showManualForm); setShowAIInput(false); setAIResult(null); }}
+            onClick={openManualForm}
             className="btn-secondary flex items-center gap-2"
           >
             <Plus className="w-4 h-4" />
@@ -179,8 +199,9 @@ export default function ExpensesPage() {
       {/* AI Natural Language Input */}
       {showAIInput && (
         <NaturalLanguageInput
-          groupId={parseInt(groupId)}
+          groupId={groupId} // MongoDB string ID
           members={members}
+          currentUser={user}
           onParsed={handleAIParsed}
           onCancel={() => setShowAIInput(false)}
         />
@@ -191,9 +212,10 @@ export default function ExpensesPage() {
         <AIConfirmationCard
           result={aiResult}
           originalText={aiOriginalText}
+          warnings={aiWarnings}
           members={members}
           onConfirm={handleAIConfirm}
-          onEdit={() => { setAIResult(null); setShowManualForm(true); }}
+          onEdit={() => { setAIResult(null); openManualForm(); }}
           onCancel={() => setAIResult(null)}
           submitting={submitting}
         />
@@ -214,6 +236,7 @@ export default function ExpensesPage() {
                   placeholder="e.g. Dinner at restaurant"
                   className="input"
                   required
+                  autoFocus
                   maxLength={500}
                 />
               </div>
@@ -232,21 +255,25 @@ export default function ExpensesPage() {
               </div>
             </div>
 
+            {/* Payer — select from group members using user ID */}
             <div>
               <label className="label">Paid by *</label>
               <select
                 value={formData.payer_id}
-                onChange={(e) => setFormData((p) => ({ ...p, payer_id: parseInt(e.target.value) }))}
+                onChange={(e) => setFormData((p) => ({ ...p, payer_id: e.target.value }))}
                 className="input"
                 required
               >
                 <option value="">Select who paid</option>
                 {members.map((m) => (
-                  <option key={m.id} value={m.id}>{m.name}</option>
+                  <option key={m.id} value={m.id}>
+                    {m.name}{m.id === user?.id ? ' (You)' : ''}
+                  </option>
                 ))}
               </select>
             </div>
 
+            {/* Participants — toggle by user ID */}
             <div>
               <label className="label">Split between (select participants) *</label>
               <div className="flex flex-wrap gap-2 mt-1">
@@ -261,13 +288,14 @@ export default function ExpensesPage() {
                         : 'bg-white text-gray-700 border-gray-300 hover:border-blue-400'
                     }`}
                   >
-                    {m.name}
+                    {m.name}{m.id === user?.id ? ' (You)' : ''}
                   </button>
                 ))}
               </div>
               {formData.participant_ids.length > 0 && (
                 <p className="text-xs text-gray-500 mt-1">
-                  Each pays: {formData.amount
+                  Each pays:{' '}
+                  {formData.amount
                     ? `₹${(parseFloat(formData.amount) / formData.participant_ids.length).toFixed(2)}`
                     : '—'}
                 </p>
@@ -308,7 +336,12 @@ export default function ExpensesPage() {
       ) : (
         <div className="space-y-3">
           {expenses.map((expense) => (
-            <ExpenseCard key={expense.id} expense={expense} onDelete={handleDeleteExpense} />
+            <ExpenseCard
+              key={expense.id}
+              expense={expense}
+              currentUserId={user?.id}
+              onDelete={handleDeleteExpense}
+            />
           ))}
         </div>
       )}
@@ -316,7 +349,7 @@ export default function ExpensesPage() {
   );
 }
 
-function ExpenseCard({ expense, onDelete }) {
+function ExpenseCard({ expense, currentUserId, onDelete }) {
   const [expanded, setExpanded] = useState(false);
 
   return (
@@ -325,6 +358,11 @@ function ExpenseCard({ expense, onDelete }) {
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2">
             <p className="font-semibold text-gray-900 truncate">{expense.description}</p>
+            {expense.payer_id === currentUserId && (
+              <span className="text-xs bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded-full font-medium flex-shrink-0">
+                You paid
+              </span>
+            )}
           </div>
           <p className="text-sm text-gray-500 mt-0.5">
             Paid by <span className="font-medium text-gray-700">{expense.payer_name}</span>
@@ -349,13 +387,15 @@ function ExpenseCard({ expense, onDelete }) {
         </div>
       </div>
 
-      {expanded && expense.participants.length > 0 && (
+      {expanded && expense.participants && expense.participants.length > 0 && (
         <div className="mt-4 pt-3 border-t border-gray-100">
           <p className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-2">Split Details</p>
           <div className="space-y-1">
             {expense.participants.map((p) => (
-              <div key={p.id} className="flex justify-between text-sm">
-                <span className="text-gray-700">{p.member_name}</span>
+              <div key={p.user_id || p.id} className="flex justify-between text-sm">
+                <span className={`text-gray-700 ${p.user_id === currentUserId ? 'font-medium' : ''}`}>
+                  {p.name}{p.user_id === currentUserId ? ' (You)' : ''}
+                </span>
                 <span className="font-medium text-gray-900">{formatCurrency(p.share)}</span>
               </div>
             ))}

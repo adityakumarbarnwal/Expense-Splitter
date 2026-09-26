@@ -1,21 +1,24 @@
 import React, { useState } from 'react';
 import { Sparkles, AlertCircle } from 'lucide-react';
-import { aiApi } from '../../services/api';
+import { expensesApi } from '../../services/api';
 
 /**
  * NaturalLanguageInput — The AI-powered expense entry component.
  *
  * This component:
  * 1. Accepts free-text input from the user
- * 2. Sends it to the backend AI endpoint
+ * 2. Sends it to POST /api/v1/groups/:groupId/expenses/parse-ai
  * 3. Returns the parsed result for confirmation
  *
  * It does NOT save anything to the database.
  * The parent component handles confirmation and actual saving.
  */
-export default function NaturalLanguageInput({ groupId, members, onParsed, onCancel }) {
+export default function NaturalLanguageInput({ groupId, members, currentUser, onParsed, onCancel }) {
   const [text, setText] = useState('');
-  const [currentMember, setCurrentMember] = useState('');
+  const [selectedMemberName, setSelectedMemberName] = useState(
+    // Default to current logged-in user's name if they're in the group
+    currentUser ? (members.find((m) => m.id === currentUser.id)?.name || '') : ''
+  );
   const [parsing, setParsing] = useState(false);
   const [error, setError] = useState(null);
 
@@ -27,10 +30,10 @@ export default function NaturalLanguageInput({ groupId, members, onParsed, onCan
     setError(null);
 
     try {
-      const response = await aiApi.parseExpense({
+      const response = await expensesApi.parseAI(groupId, {
         text: text.trim(),
         group_id: groupId,
-        current_member_name: currentMember || null,
+        current_user_name: selectedMemberName || null,
       });
 
       if (response.success && response.result) {
@@ -65,19 +68,21 @@ export default function NaturalLanguageInput({ groupId, members, onParsed, onCan
       </div>
 
       <form onSubmit={handleParse} className="space-y-4">
-        {/* "Who are you?" for pronoun resolution */}
+        {/* "Who are you?" for pronoun resolution — pre-filled with logged-in user */}
         <div>
           <label className="label text-xs">
-            Who are you? <span className="text-gray-400">(optional — helps resolve "I", "me")</span>
+            Who are you? <span className="text-gray-400">(helps resolve "I", "me")</span>
           </label>
           <select
-            value={currentMember}
-            onChange={(e) => setCurrentMember(e.target.value)}
+            value={selectedMemberName}
+            onChange={(e) => setSelectedMemberName(e.target.value)}
             className="input text-sm"
           >
             <option value="">Select your name (optional)</option>
             {members.map((m) => (
-              <option key={m.id} value={m.name}>{m.name}</option>
+              <option key={m.id} value={m.name}>
+                {m.name}{m.id === currentUser?.id ? ' (You)' : ''}
+              </option>
             ))}
           </select>
         </div>
@@ -116,9 +121,7 @@ export default function NaturalLanguageInput({ groupId, members, onParsed, onCan
         {error && (
           <div className="flex items-start gap-2 p-3 bg-red-50 rounded-lg border border-red-200">
             <AlertCircle className="w-4 h-4 text-red-500 flex-shrink-0 mt-0.5" />
-            <div>
-              <p className="text-sm text-red-700">{error}</p>
-            </div>
+            <p className="text-sm text-red-700">{error}</p>
           </div>
         )}
 

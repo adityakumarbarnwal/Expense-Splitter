@@ -1,10 +1,22 @@
 """
-Models package — imports all models to ensure they are registered with SQLAlchemy.
+Models package — MongoDB document models.
 """
+from app.models.documents import (
+    UserDocument,
+    GroupDocument,
+    ExpenseDocument,
+    ExpenseParticipantDoc,
+    SettlementDocument,
+    NotificationDocument,
+    utcnow,
+)
 
-from app.models.base import Base
-from app.models.group import Group, Member
-from app.models.expense import Expense, ExpenseParticipant
-from app.models.settlement import Settlement
-
-__all__ = ["Base", "Group", "Member", "Expense", "ExpenseParticipant", "Settlement"]
+__all__ = [
+    "UserDocument",
+    "GroupDocument",
+    "ExpenseDocument",
+    "ExpenseParticipantDoc",
+    "SettlementDocument",
+    "NotificationDocument",
+    "utcnow",
+]

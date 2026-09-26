@@ -17,18 +17,38 @@ class Settings(BaseSettings):
 
     # Application
     app_name: str = "Group Expense Splitter"
-    app_version: str = "1.0.0"
+    app_version: str = "2.0.0"
     debug: bool = False
 
-    # Database
-    database_url: str = "sqlite:///./expense_splitter.db"
+    # MongoDB
+    mongodb_uri: str = "mongodb://localhost:27017"
+    mongodb_db_name: str = "group_expense_dev"
+
+    # JWT
+    jwt_secret: str = "change-me-in-production-use-openssl-rand-hex-32"
+    jwt_algorithm: str = "HS256"
+    jwt_expires_minutes: int = 60 * 24 * 7  # 7 days
 
     # AI / Gemini
     gemini_api_key: str = ""
-    gemini_model: str = "gemini-2.0-flash"
+    gemini_model: str = "gemini-3.8-flash"
+
+    # Email
+    mail_username: str = ""
+    mail_password: str = ""
+    mail_from: str = "noreply@expensesplitter.app"
+    mail_from_name: str = "Group Expense Splitter"
+    mail_server: str = "smtp.gmail.com"
+    mail_port: int = 587
+    mail_starttls: bool = True
+    mail_ssl_tls: bool = False
+    mail_enabled: bool = False  # Set true in production with real SMTP
 
     # CORS
     allowed_origins: str = "http://localhost:5173,http://localhost:3000"
+
+    # Frontend URL (for email links)
+    frontend_url: str = "http://localhost:5173"
 
     @property
     def allowed_origins_list(self) -> list[str]:

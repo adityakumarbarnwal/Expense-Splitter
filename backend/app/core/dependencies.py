@@ -1,20 +1,10 @@
 """
-Database session dependency injection.
-Provides a database session to FastAPI route handlers.
+FastAPI dependencies — MongoDB edition.
+
+get_db() is no longer used (routes use get_database() directly from db.database).
+This module is kept for potential future use.
 """
 
-from collections.abc import Generator
-from sqlalchemy.orm import Session
-from app.db.database import SessionLocal
+from app.db.database import get_database
 
-
-def get_db() -> Generator[Session, None, None]:
-    """
-    Dependency that provides a SQLAlchemy database session.
-    The session is automatically closed after the request.
-    """
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
+__all__ = ["get_database"]

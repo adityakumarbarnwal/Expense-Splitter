@@ -1,112 +1,156 @@
 """
-Balance Engine — calculates net balances for all group members.
+Balance engine for MongoDB-backed data.
 
-IMPORTANT: All calculations use Decimal. LLM is never involved.
+Calculates net balances for all members of a group based on:
+- Expenses (paid vs. owed shares)
+- Settlements (payments between members)
 
-Balance calculation:
-  For each member:
-    total_paid = sum of expenses where member is payer
-    total_owed = sum of shares assigned to member across all expenses
-    net_balance = total_paid - total_owed + settlements_received - settlements_paid
+Returns per-member net balance using float arithmetic
+(rounded to 2 decimal places for display).
 
-  Positive net_balance: Member is owed money (others owe them)
-  Negative net_balance: Member owes money (they owe others)
-  Zero: Settled
+Formula:
+  net = total_paid - total_owed + settlements_paid - settlements_received
+
+Positive net = you are owed money.
+Negative net = you owe money.
 """
 
-from decimal import Decimal
-from sqlalchemy import select
-from sqlalchemy.orm import Session
+import logging
+from motor.motor_asyncio import AsyncIOMotorDatabase
 
-from app.models.group import Member
-from app.models.expense import Expense, ExpenseParticipant
-from app.models.settlement import Settlement
+logger = logging.getLogger(__name__)
+EPSILON = 0.005  # Amounts smaller than this are treated as zero
 
 
-def calculate_group_balances(
-    db: Session, group_id: int
-) -> dict[int, dict]:
+async def calculate_group_balances(
+    db: AsyncIOMotorDatabase,
+    group_id: str,
+    member_ids: list[str],
+    member_names: dict[str, str],  # {user_id: name}
+) -> dict[str, dict]:
     """
-    Calculate net balance for every member in the group.
+    Calculate net balances for all group members.
 
-    Returns a dict mapping member_id to:
+    Returns dict keyed by user_id:
     {
-        "member_id": int,
-        "member_name": str,
-        "total_paid": Decimal,   # total amount paid as payer
-        "total_owed": Decimal,   # total share owed across all expenses
-        "net_balance": Decimal,  # total_paid - total_owed (+ settlements delta)
+        user_id: {
+            "user_id": str,
+            "member_name": str,
+            "total_paid": float,
+            "total_owed": float,
+            "settlements_paid": float,
+            "settlements_received": float,
+            "net_balance": float,
+        }
     }
     """
-    # Fetch all members of the group
-    members = db.execute(
-        select(Member).where(Member.group_id == group_id)
-    ).scalars().all()
-
-    if not members:
-        return {}
-
-    # Initialize balance dict
-    balances: dict[int, dict] = {
-        m.id: {
-            "member_id": m.id,
-            "member_name": m.name,
-            "total_paid": Decimal("0.00"),
-            "total_owed": Decimal("0.00"),
-            "settlements_paid": Decimal("0.00"),
-            "settlements_received": Decimal("0.00"),
-            "net_balance": Decimal("0.00"),
+    # Initialize balance tracking
+    balances: dict[str, dict] = {}
+    for uid in member_ids:
+        balances[uid] = {
+            "user_id": uid,
+            "member_name": member_names.get(uid, "Unknown"),
+            "total_paid": 0.0,
+            "total_owed": 0.0,
+            "settlements_paid": 0.0,
+            "settlements_received": 0.0,
+            "net_balance": 0.0,
         }
-        for m in members
-    }
 
-    member_ids = set(balances.keys())
+    # Process expenses
+    async for expense in db.expenses.find({"group_id": group_id}):
+        payer_id = expense["payer_id"]
+        amount = float(expense["amount"])
 
-    # Calculate total_paid: amount each member paid as payer
-    expenses = db.execute(
-        select(Expense).where(Expense.group_id == group_id)
-    ).scalars().all()
+        if payer_id in balances:
+            balances[payer_id]["total_paid"] += amount
 
-    for expense in expenses:
-        if expense.payer_id in balances:
-            balances[expense.payer_id]["total_paid"] += Decimal(str(expense.amount))
+        for participant in expense.get("participants", []):
+            uid = participant["user_id"]
+            share = float(participant["share"])
+            if uid in balances:
+                balances[uid]["total_owed"] += share
 
-    # Calculate total_owed: sum of shares assigned to each member
-    participants = db.execute(
-        select(ExpenseParticipant)
-        .join(Expense, ExpenseParticipant.expense_id == Expense.id)
-        .where(Expense.group_id == group_id)
-    ).scalars().all()
+    # Process settlements
+    async for settlement in db.settlements.find({"group_id": group_id}):
+        payer_id = settlement["payer_id"]
+        receiver_id = settlement["receiver_id"]
+        amount = float(settlement["amount"])
 
-    for participant in participants:
-        if participant.member_id in balances:
-            balances[participant.member_id]["total_owed"] += Decimal(str(participant.share))
+        if payer_id in balances:
+            balances[payer_id]["settlements_paid"] += amount
+        if receiver_id in balances:
+            balances[receiver_id]["settlements_received"] += amount
 
-    # Calculate settlement effects
-    settlements = db.execute(
-        select(Settlement).where(Settlement.group_id == group_id)
-    ).scalars().all()
-
-    for settlement in settlements:
-        amount = Decimal(str(settlement.amount))
-        if settlement.payer_id in balances:
-            balances[settlement.payer_id]["settlements_paid"] += amount
-        if settlement.receiver_id in balances:
-            balances[settlement.receiver_id]["settlements_received"] += amount
-
-    # Compute net balance for each member
-    # net = total_paid - total_owed + settlements_paid - settlements_received
-    #
-    # settlements_paid: money you paid to others (clearing your debt)
-    #   → increases your net (your debt is reduced / credit grows)
-    # settlements_received: money others paid you (satisfying their debt to you)
-    #   → decreases your net (your outstanding credit is now consumed)
-    for member_id, data in balances.items():
-        data["net_balance"] = (
+    # Compute net balances
+    for uid, data in balances.items():
+        net = (
             data["total_paid"]
             - data["total_owed"]
             + data["settlements_paid"]
             - data["settlements_received"]
         )
+        data["net_balance"] = round(net, 2)
+        data["total_paid"] = round(data["total_paid"], 2)
+        data["total_owed"] = round(data["total_owed"], 2)
+        data["settlements_paid"] = round(data["settlements_paid"], 2)
+        data["settlements_received"] = round(data["settlements_received"], 2)
 
     return balances
+
+
+def generate_settlement_suggestions(
+    balances: dict[str, dict],
+) -> list[dict]:
+    """
+    Generate minimal settlement suggestions using greedy creditor-debtor matching.
+
+    Returns list of:
+    {
+        "from_user_id": str,
+        "from_member_name": str,
+        "to_user_id": str,
+        "to_member_name": str,
+        "amount": float,
+    }
+    """
+    creditors = []  # (amount, user_id, name) — positive net (owed money)
+    debtors = []    # (amount, user_id, name) — negative net (owe money)
+
+    for uid, data in balances.items():
+        net = data["net_balance"]
+        if net > EPSILON:
+            creditors.append([net, uid, data["member_name"]])
+        elif net < -EPSILON:
+            debtors.append([-net, uid, data["member_name"]])
+
+    # Sort descending by amount for efficient matching
+    creditors.sort(key=lambda x: -x[0])
+    debtors.sort(key=lambda x: -x[0])
+
+    suggestions = []
+    i, j = 0, 0
+
+    while i < len(creditors) and j < len(debtors):
+        cred_amt, cred_id, cred_name = creditors[i]
+        debt_amt, debt_id, debt_name = debtors[j]
+
+        payment = round(min(cred_amt, debt_amt), 2)
+        if payment > EPSILON:
+            suggestions.append({
+                "from_user_id": debt_id,
+                "from_member_name": debt_name,
+                "to_user_id": cred_id,
+                "to_member_name": cred_name,
+                "amount": payment,
+            })
+
+        creditors[i][0] = round(cred_amt - payment, 2)
+        debtors[j][0] = round(debt_amt - payment, 2)
+
+        if creditors[i][0] <= EPSILON:
+            i += 1
+        if debtors[j][0] <= EPSILON:
+            j += 1
+
+    return suggestions

@@ -1,18 +1,27 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, Link } from 'react-router-dom';
-import { Plus, Trash2, Receipt, BarChart3, UserPlus } from 'lucide-react';
+import { Plus, Trash2, Receipt, BarChart3, UserPlus, Pencil, Check, X } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { groupsApi } from '../services/api';
 import { LoadingSpinner, ErrorMessage } from '../components/common/UI';
+import { useAuth } from '../contexts/AuthContext';
 
 export default function GroupDetailPage() {
   const { groupId } = useParams();
+  const { user } = useAuth();
   const [group, setGroup] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  const [newMemberName, setNewMemberName] = useState('');
+
+  // Add member by email
+  const [newMemberEmail, setNewMemberEmail] = useState('');
   const [addingMember, setAddingMember] = useState(false);
   const [showAddForm, setShowAddForm] = useState(false);
+
+  // Rename group
+  const [editingName, setEditingName] = useState(false);
+  const [newGroupName, setNewGroupName] = useState('');
+  const [renamingGroup, setRenamingGroup] = useState(false);
 
   const fetchGroup = async () => {
     try {
@@ -26,19 +35,18 @@ export default function GroupDetailPage() {
     }
   };
 
-  useEffect(() => {
-    fetchGroup();
-  }, [groupId]);
+  useEffect(() => { fetchGroup(); }, [groupId]);
 
+  // --- Add member by email ---
   const handleAddMember = async (e) => {
     e.preventDefault();
-    if (!newMemberName.trim()) return;
+    if (!newMemberEmail.trim()) return;
 
     setAddingMember(true);
     try {
-      await groupsApi.addMember(groupId, { name: newMemberName.trim() });
-      toast.success(`${newMemberName} added to group`);
-      setNewMemberName('');
+      await groupsApi.addMember(groupId, { email: newMemberEmail.trim() });
+      toast.success(`Member added to group`);
+      setNewMemberEmail('');
       setShowAddForm(false);
       fetchGroup();
     } catch (err) {
@@ -48,8 +56,13 @@ export default function GroupDetailPage() {
     }
   };
 
+  // --- Remove member (uses MongoDB user _id) ---
   const handleRemoveMember = async (member) => {
-    if (!window.confirm(`Remove ${member.name} from the group?`)) return;
+    if (member.id === user?.id) {
+      if (!window.confirm('Remove yourself from this group?')) return;
+    } else {
+      if (!window.confirm(`Remove ${member.name} from the group?`)) return;
+    }
     try {
       await groupsApi.removeMember(groupId, member.id);
       toast.success(`${member.name} removed`);
@@ -59,26 +72,93 @@ export default function GroupDetailPage() {
     }
   };
 
+  // --- Rename group ---
+  const handleStartRename = () => {
+    setNewGroupName(group.name);
+    setEditingName(true);
+  };
+
+  const handleRenameGroup = async (e) => {
+    e.preventDefault();
+    if (!newGroupName.trim() || newGroupName.trim() === group.name) {
+      setEditingName(false);
+      return;
+    }
+    setRenamingGroup(true);
+    try {
+      await groupsApi.update(groupId, { name: newGroupName.trim() });
+      toast.success('Group renamed');
+      setEditingName(false);
+      fetchGroup();
+    } catch (err) {
+      toast.error(err.message);
+    } finally {
+      setRenamingGroup(false);
+    }
+  };
+
   if (loading) return <LoadingSpinner message="Loading group..." />;
   if (error) return <ErrorMessage message={error} onRetry={fetchGroup} />;
   if (!group) return null;
+
+  const members = group.members || [];
 
   return (
     <div>
       {/* Breadcrumb */}
       <div className="text-sm text-gray-500 mb-6">
-        <Link to="/" className="hover:text-blue-600">Groups</Link>
+        <Link to="/groups" className="hover:text-blue-600">Groups</Link>
         <span className="mx-2">/</span>
         <span className="text-gray-900 font-medium">{group.name}</span>
       </div>
 
       {/* Group Header */}
       <div className="flex items-start justify-between mb-8">
-        <div>
-          <h1 className="text-3xl font-bold text-gray-900">{group.name}</h1>
+        <div className="flex-1 min-w-0">
+          {/* Inline rename */}
+          {editingName ? (
+            <form onSubmit={handleRenameGroup} className="flex items-center gap-2">
+              <input
+                type="text"
+                value={newGroupName}
+                onChange={(e) => setNewGroupName(e.target.value)}
+                className="input text-2xl font-bold py-1 max-w-xs"
+                autoFocus
+                required
+                maxLength={255}
+              />
+              <button
+                type="submit"
+                disabled={renamingGroup || !newGroupName.trim()}
+                className="p-1.5 text-green-600 hover:bg-green-50 rounded-lg transition-colors"
+                title="Save name"
+              >
+                <Check className="w-5 h-5" />
+              </button>
+              <button
+                type="button"
+                onClick={() => setEditingName(false)}
+                className="p-1.5 text-gray-400 hover:bg-gray-100 rounded-lg transition-colors"
+                title="Cancel"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </form>
+          ) : (
+            <div className="flex items-center gap-3">
+              <h1 className="text-3xl font-bold text-gray-900">{group.name}</h1>
+              <button
+                onClick={handleStartRename}
+                className="p-1.5 text-gray-300 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"
+                title="Rename group"
+              >
+                <Pencil className="w-4 h-4" />
+              </button>
+            </div>
+          )}
           {group.description && <p className="text-gray-500 mt-1">{group.description}</p>}
           <p className="text-sm text-gray-400 mt-1">
-            {group.member_count} member{group.member_count !== 1 ? 's' : ''}
+            {members.length} member{members.length !== 1 ? 's' : ''}
           </p>
         </div>
       </div>
@@ -115,7 +195,7 @@ export default function GroupDetailPage() {
       <div className="card">
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-lg font-semibold text-gray-900">
-            Members ({group.member_count})
+            Members ({members.length})
           </h2>
           <button
             onClick={() => setShowAddForm(!showAddForm)}
@@ -126,41 +206,45 @@ export default function GroupDetailPage() {
           </button>
         </div>
 
-        {/* Add Member Form */}
+        {/* Add Member Form — by email (registered users only) */}
         {showAddForm && (
-          <form onSubmit={handleAddMember} className="mb-4 flex gap-3">
-            <input
-              type="text"
-              value={newMemberName}
-              onChange={(e) => setNewMemberName(e.target.value)}
-              placeholder="Member's name (e.g. Rahul)"
-              className="input flex-1"
-              required
-              autoFocus
-              maxLength={100}
-            />
-            <button type="submit" disabled={addingMember || !newMemberName.trim()} className="btn-primary">
-              {addingMember ? 'Adding...' : 'Add'}
-            </button>
-            <button
-              type="button"
-              onClick={() => { setShowAddForm(false); setNewMemberName(''); }}
-              className="btn-secondary"
-            >
-              Cancel
-            </button>
+          <form onSubmit={handleAddMember} className="mb-4">
+            <div className="flex gap-3">
+              <input
+                type="email"
+                value={newMemberEmail}
+                onChange={(e) => setNewMemberEmail(e.target.value)}
+                placeholder="member@example.com (must be registered)"
+                className="input flex-1"
+                required
+                autoFocus
+              />
+              <button type="submit" disabled={addingMember || !newMemberEmail.trim()} className="btn-primary">
+                {addingMember ? 'Adding...' : 'Add'}
+              </button>
+              <button
+                type="button"
+                onClick={() => { setShowAddForm(false); setNewMemberEmail(''); }}
+                className="btn-secondary"
+              >
+                Cancel
+              </button>
+            </div>
+            <p className="text-xs text-gray-400 mt-1.5">
+              The user must already be registered with SplitSmart.
+            </p>
           </form>
         )}
 
         {/* Members List */}
-        {group.members.length === 0 ? (
+        {members.length === 0 ? (
           <div className="text-center py-8 text-gray-400">
             <p className="text-4xl mb-2">👤</p>
-            <p>No members yet. Add some members to get started.</p>
+            <p>No members yet. Add members by their email address.</p>
           </div>
         ) : (
           <ul className="divide-y divide-gray-100">
-            {group.members.map((member) => (
+            {members.map((member) => (
               <li key={member.id} className="flex items-center justify-between py-3">
                 <div className="flex items-center gap-3">
                   <div className="w-9 h-9 bg-blue-100 rounded-full flex items-center justify-center">
@@ -168,7 +252,13 @@ export default function GroupDetailPage() {
                       {member.name.charAt(0).toUpperCase()}
                     </span>
                   </div>
-                  <span className="font-medium text-gray-900">{member.name}</span>
+                  <div>
+                    <span className="font-medium text-gray-900">{member.name}</span>
+                    {member.id === user?.id && (
+                      <span className="ml-2 text-xs bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded-full">You</span>
+                    )}
+                    <p className="text-xs text-gray-400">{member.email}</p>
+                  </div>
                 </div>
                 <button
                   onClick={() => handleRemoveMember(member)}

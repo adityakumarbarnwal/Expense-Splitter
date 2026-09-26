@@ -4,6 +4,7 @@ import { CheckCircle, AlertCircle, ArrowRight, Plus } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { groupsApi, balancesApi } from '../services/api';
 import { LoadingSpinner, ErrorMessage, EmptyState } from '../components/common/UI';
+import { useAuth } from '../contexts/AuthContext';
 
 function formatCurrency(amount) {
   return `₹${Math.abs(Number(amount)).toFixed(2)}`;
@@ -17,12 +18,14 @@ function formatDate(dateStr) {
 
 export default function BalancesPage() {
   const { groupId } = useParams();
+  const { user } = useAuth();
   const [group, setGroup] = useState(null);
   const [balanceData, setBalanceData] = useState(null);
   const [settlements, setSettlements] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [showSettleForm, setShowSettleForm] = useState(false);
+  // payer_id / receiver_id are MongoDB ObjectId strings
   const [settleForm, setSettleForm] = useState({ payer_id: '', receiver_id: '', amount: '', note: '' });
   const [submitting, setSubmitting] = useState(false);
 
@@ -59,8 +62,8 @@ export default function BalancesPage() {
     setSubmitting(true);
     try {
       await balancesApi.recordSettlement(groupId, {
-        payer_id: parseInt(settleForm.payer_id),
-        receiver_id: parseInt(settleForm.receiver_id),
+        payer_id: settleForm.payer_id,       // MongoDB ObjectId string
+        receiver_id: settleForm.receiver_id,  // MongoDB ObjectId string
         amount: parseFloat(settleForm.amount),
         note: settleForm.note || null,
       });
@@ -76,11 +79,12 @@ export default function BalancesPage() {
   };
 
   // Pre-fill settlement form from a suggestion
+  // Suggestion: { from_user_id, from_member_name, to_user_id, to_member_name, amount }
   const handleUseSuggestion = (suggestion) => {
     setSettleForm({
-      payer_id: suggestion.from_member_id.toString(),
-      receiver_id: suggestion.to_member_id.toString(),
-      amount: suggestion.amount.toString(),
+      payer_id: suggestion.from_user_id,
+      receiver_id: suggestion.to_user_id,
+      amount: suggestion.amount.toFixed(2),
       note: '',
     });
     setShowSettleForm(true);
@@ -96,7 +100,7 @@ export default function BalancesPage() {
     <div>
       {/* Breadcrumb */}
       <div className="text-sm text-gray-500 mb-6">
-        <Link to="/" className="hover:text-blue-600">Groups</Link>
+        <Link to="/groups" className="hover:text-blue-600">Groups</Link>
         <span className="mx-2">/</span>
         <Link to={`/groups/${groupId}`} className="hover:text-blue-600">{group?.name}</Link>
         <span className="mx-2">/</span>
@@ -130,7 +134,9 @@ export default function BalancesPage() {
                 >
                   <option value="">Select payer</option>
                   {members.map((m) => (
-                    <option key={m.id} value={m.id}>{m.name}</option>
+                    <option key={m.id} value={m.id}>
+                      {m.name}{m.id === user?.id ? ' (You)' : ''}
+                    </option>
                   ))}
                 </select>
               </div>
@@ -144,7 +150,9 @@ export default function BalancesPage() {
                 >
                   <option value="">Select receiver</option>
                   {members.map((m) => (
-                    <option key={m.id} value={m.id}>{m.name}</option>
+                    <option key={m.id} value={m.id}>
+                      {m.name}{m.id === user?.id ? ' (You)' : ''}
+                    </option>
                   ))}
                 </select>
               </div>
@@ -197,7 +205,8 @@ export default function BalancesPage() {
               <>
                 <AlertCircle className="w-6 h-6 text-orange-500" />
                 <p className="font-semibold text-orange-800">
-                  {balanceData.settlement_suggestions.length} settlement{balanceData.settlement_suggestions.length !== 1 ? 's' : ''} needed
+                  {balanceData.settlement_suggestions?.length ?? 0} settlement
+                  {(balanceData.settlement_suggestions?.length ?? 0) !== 1 ? 's' : ''} needed
                 </p>
               </>
             )}
@@ -205,8 +214,8 @@ export default function BalancesPage() {
         </div>
       )}
 
-      {/* Net Balances */}
-      {balanceData && balanceData.balances.length > 0 && (
+      {/* Net Balances — uses user_id and member_name from new API */}
+      {balanceData && balanceData.balances?.length > 0 && (
         <div className="card mb-6">
           <h2 className="text-lg font-semibold text-gray-900 mb-4">Net Balances</h2>
           <div className="space-y-3">
@@ -214,16 +223,31 @@ export default function BalancesPage() {
               .sort((a, b) => b.net_balance - a.net_balance)
               .map((b) => {
                 const net = Number(b.net_balance);
+                const isCurrentUser = b.user_id === user?.id;
                 return (
-                  <div key={b.member_id} className="flex items-center justify-between py-2 border-b border-gray-100 last:border-0">
+                  <div
+                    key={b.user_id}
+                    className={`flex items-center justify-between py-2 border-b border-gray-100 last:border-0 ${
+                      isCurrentUser ? 'bg-blue-50/40 -mx-2 px-2 rounded-lg' : ''
+                    }`}
+                  >
                     <div className="flex items-center gap-3">
-                      <div className="w-9 h-9 bg-gray-100 rounded-full flex items-center justify-center">
-                        <span className="text-gray-700 font-semibold text-sm">
-                          {b.member_name.charAt(0).toUpperCase()}
+                      <div className={`w-9 h-9 rounded-full flex items-center justify-center ${
+                        isCurrentUser ? 'bg-blue-100' : 'bg-gray-100'
+                      }`}>
+                        <span className={`font-semibold text-sm ${
+                          isCurrentUser ? 'text-blue-700' : 'text-gray-700'
+                        }`}>
+                          {b.member_name?.charAt(0).toUpperCase()}
                         </span>
                       </div>
                       <div>
-                        <p className="font-medium text-gray-900">{b.member_name}</p>
+                        <p className="font-medium text-gray-900">
+                          {b.member_name}
+                          {isCurrentUser && (
+                            <span className="ml-1.5 text-xs bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded-full">You</span>
+                          )}
+                        </p>
                         <p className="text-xs text-gray-400">
                           Paid {formatCurrency(b.total_paid)} · Owes {formatCurrency(b.total_owed)}
                         </p>
@@ -248,27 +272,42 @@ export default function BalancesPage() {
         </div>
       )}
 
-      {/* Settlement Suggestions */}
-      {balanceData && balanceData.settlement_suggestions.length > 0 && (
+      {/* Settlement Suggestions — uses from_user_id / to_user_id */}
+      {balanceData && balanceData.settlement_suggestions?.length > 0 && (
         <div className="card mb-6">
           <h2 className="text-lg font-semibold text-gray-900 mb-4">Suggested Settlements</h2>
           <div className="space-y-3">
-            {balanceData.settlement_suggestions.map((s, i) => (
-              <div key={i} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
-                <div className="flex items-center gap-2">
-                  <span className="font-medium text-gray-900">{s.from_member_name}</span>
-                  <ArrowRight className="w-4 h-4 text-gray-400" />
-                  <span className="font-medium text-gray-900">{s.to_member_name}</span>
-                  <span className="font-bold text-green-700 ml-2">{formatCurrency(s.amount)}</span>
-                </div>
-                <button
-                  onClick={() => handleUseSuggestion(s)}
-                  className="btn-secondary text-xs py-1 px-3"
+            {balanceData.settlement_suggestions.map((s, i) => {
+              const involvesCurrent =
+                s.from_user_id === user?.id || s.to_user_id === user?.id;
+              return (
+                <div
+                  key={i}
+                  className={`flex items-center justify-between p-3 rounded-lg ${
+                    involvesCurrent ? 'bg-blue-50 border border-blue-100' : 'bg-gray-50'
+                  }`}
                 >
-                  Record
-                </button>
-              </div>
-            ))}
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className={`font-medium ${s.from_user_id === user?.id ? 'text-blue-700' : 'text-gray-900'}`}>
+                      {s.from_member_name}
+                      {s.from_user_id === user?.id && ' (You)'}
+                    </span>
+                    <ArrowRight className="w-4 h-4 text-gray-400" />
+                    <span className={`font-medium ${s.to_user_id === user?.id ? 'text-green-700' : 'text-gray-900'}`}>
+                      {s.to_member_name}
+                      {s.to_user_id === user?.id && ' (You)'}
+                    </span>
+                    <span className="font-bold text-green-700 ml-1">{formatCurrency(s.amount)}</span>
+                  </div>
+                  <button
+                    onClick={() => handleUseSuggestion(s)}
+                    className="btn-secondary text-xs py-1 px-3 flex-shrink-0"
+                  >
+                    Record
+                  </button>
+                </div>
+              );
+            })}
           </div>
         </div>
       )}
@@ -288,7 +327,9 @@ export default function BalancesPage() {
                     <span className="text-gray-400">→</span>
                     <span className="font-medium text-gray-900">{s.receiver_name}</span>
                   </div>
-                  <p className="text-xs text-gray-400">{formatDate(s.created_at)}{s.note ? ` · ${s.note}` : ''}</p>
+                  <p className="text-xs text-gray-400">
+                    {formatDate(s.created_at)}{s.note ? ` · ${s.note}` : ''}
+                  </p>
                 </div>
                 <span className="font-semibold text-gray-700">{formatCurrency(s.amount)}</span>
               </div>

@@ -1,8 +1,5 @@
 """
-FastAPI application factory.
-
-Initializes the app, configures CORS, includes all routes,
-and creates the database tables on startup.
+FastAPI application factory — MongoDB + JWT Auth edition.
 """
 
 import logging
@@ -13,8 +10,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import get_settings
-from app.db.database import engine
-from app.models import Base  # Import all models to register them with metadata
+from app.db.database import connect_db, disconnect_db
 from app.api.v1.router import router as api_v1_router
 
 logging.basicConfig(
@@ -27,31 +23,24 @@ settings = get_settings()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
-    """
-    Application lifespan manager.
-    Creates all database tables on startup.
-    (In production, use Alembic migrations instead.)
-    """
-    logger.info("Starting up Group Expense Splitter API...")
-    Base.metadata.create_all(bind=engine)
-    logger.info("Database tables ready.")
+    """Connect to MongoDB on startup, disconnect on shutdown."""
+    logger.info("Starting up Group Expense Splitter API v2 (MongoDB)...")
+    await connect_db()
+    logger.info("Ready to serve requests.")
     yield
-    logger.info("Shutting down...")
+    await disconnect_db()
+    logger.info("Shutting down.")
 
 
 app = FastAPI(
     title=settings.app_name,
     version=settings.app_version,
-    description=(
-        "A group expense splitting application with natural-language AI expense entry. "
-        "Built for DSC4141 academic project."
-    ),
+    description="Group Expense Splitter — DSC4141 Academic GenAI Project. MongoDB + JWT Auth.",
     lifespan=lifespan,
     docs_url="/docs",
     redoc_url="/redoc",
 )
 
-# Configure CORS for React frontend
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.allowed_origins_list,
@@ -60,28 +49,24 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Include API routes
 app.include_router(api_v1_router)
 
 
 @app.get("/", tags=["health"])
 def health_check() -> dict:
-    """Health check endpoint."""
     return {
         "status": "ok",
         "app": settings.app_name,
         "version": settings.app_version,
+        "database": "mongodb",
     }
 
 
 @app.get("/health", tags=["health"])
 def health() -> dict:
-    """Detailed health check."""
     return {
         "status": "healthy",
-        "database": "connected",
-        "ai_configured": bool(
-            settings.gemini_api_key
-            and settings.gemini_api_key != "your_gemini_api_key_here"
-        ),
+        "database": "mongodb",
+        "db_name": settings.mongodb_db_name,
+        "ai_configured": bool(settings.gemini_api_key),
     }
