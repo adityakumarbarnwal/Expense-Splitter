@@ -108,6 +108,7 @@ class GroupListItem(BaseModel):
     description: Optional[str] = None
     member_count: int
     created_at: datetime
+    user_net_balance: Optional[float] = None  # Current user's net position in this group
 
 
 # ──────────────────────────────────────────────

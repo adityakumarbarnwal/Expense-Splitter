@@ -1,6 +1,9 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useParams, Link } from 'react-router-dom';
-import { CheckCircle, AlertCircle, ArrowRight, Plus } from 'lucide-react';
+import {
+  CheckCircle, AlertCircle, ArrowRight, Plus, ChevronRight,
+  TrendingUp, TrendingDown, Minus, Users, History
+} from 'lucide-react';
 import toast from 'react-hot-toast';
 import { groupsApi, balancesApi } from '../services/api';
 import { LoadingSpinner, ErrorMessage, EmptyState } from '../components/common/UI';
@@ -9,11 +12,19 @@ import { useAuth } from '../contexts/AuthContext';
 function formatCurrency(amount) {
   return `₹${Math.abs(Number(amount)).toFixed(2)}`;
 }
-
 function formatDate(dateStr) {
   return new Date(dateStr).toLocaleDateString('en-IN', {
     day: 'numeric', month: 'short', year: 'numeric',
   });
+}
+
+const avatarColors = [
+  'from-indigo-500 to-violet-600', 'from-emerald-500 to-teal-600',
+  'from-orange-500 to-rose-500', 'from-sky-500 to-blue-600',
+  'from-pink-500 to-fuchsia-600', 'from-amber-500 to-orange-600',
+];
+function getAvatarColor(name) {
+  return avatarColors[(name || 'A').charCodeAt(0) % avatarColors.length];
 }
 
 export default function BalancesPage() {
@@ -25,7 +36,6 @@ export default function BalancesPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [showSettleForm, setShowSettleForm] = useState(false);
-  // payer_id / receiver_id are MongoDB ObjectId strings
   const [settleForm, setSettleForm] = useState({ payer_id: '', receiver_id: '', amount: '', note: '' });
   const [submitting, setSubmitting] = useState(false);
 
@@ -52,18 +62,16 @@ export default function BalancesPage() {
   const handleRecordSettlement = async (e) => {
     e.preventDefault();
     if (!settleForm.payer_id || !settleForm.receiver_id || !settleForm.amount) {
-      toast.error('Please fill all required fields');
-      return;
+      toast.error('Please fill all required fields'); return;
     }
     if (settleForm.payer_id === settleForm.receiver_id) {
-      toast.error('Payer and receiver must be different');
-      return;
+      toast.error('Payer and receiver must be different'); return;
     }
     setSubmitting(true);
     try {
       await balancesApi.recordSettlement(groupId, {
-        payer_id: settleForm.payer_id,       // MongoDB ObjectId string
-        receiver_id: settleForm.receiver_id,  // MongoDB ObjectId string
+        payer_id: settleForm.payer_id,
+        receiver_id: settleForm.receiver_id,
         amount: parseFloat(settleForm.amount),
         note: settleForm.note || null,
       });
@@ -78,8 +86,6 @@ export default function BalancesPage() {
     }
   };
 
-  // Pre-fill settlement form from a suggestion
-  // Suggestion: { from_user_id, from_member_name, to_user_id, to_member_name, amount }
   const handleUseSuggestion = (suggestion) => {
     setSettleForm({
       payer_id: suggestion.from_user_id,
@@ -96,89 +102,144 @@ export default function BalancesPage() {
 
   const members = group?.members || [];
 
+  // Find current user's balance
+  const myBalance = balanceData?.balances?.find(b => b.user_id === user?.id);
+  const myNet = Number(myBalance?.net_balance ?? 0);
+
   return (
-    <div>
+    <div className="space-y-6 fade-up">
       {/* Breadcrumb */}
-      <div className="text-sm text-gray-500 mb-6">
-        <Link to="/groups" className="hover:text-blue-600">Groups</Link>
-        <span className="mx-2">/</span>
-        <Link to={`/groups/${groupId}`} className="hover:text-blue-600">{group?.name}</Link>
-        <span className="mx-2">/</span>
-        <span className="text-gray-900 font-medium">Balances</span>
+      <div className="flex items-center gap-1.5 text-xs text-slate-400 font-medium">
+        <Link to="/groups" className="hover:text-brand-600 transition-colors">Groups</Link>
+        <ChevronRight className="w-3.5 h-3.5" />
+        <Link to={`/groups/${groupId}`} className="hover:text-brand-600 transition-colors">
+          {group?.name}
+        </Link>
+        <ChevronRight className="w-3.5 h-3.5" />
+        <span className="text-slate-700 font-semibold">Balances</span>
       </div>
 
-      <div className="flex items-center justify-between mb-6">
-        <h1 className="text-2xl font-bold text-gray-900">Balances</h1>
-        <button
-          onClick={() => setShowSettleForm(!showSettleForm)}
-          className="btn-primary flex items-center gap-2"
-        >
-          <Plus className="w-4 h-4" />
-          Record Settlement
-        </button>
+      {/* My Position Hero Card */}
+      <div className={`glass-card p-6 border ${
+        myNet > 0.005 ? 'border-emerald-200/50 bg-emerald-50/20'
+        : myNet < -0.005 ? 'border-red-200/50 bg-red-50/20'
+        : 'border-slate-200/50'
+      }`}>
+        <div className="flex items-center justify-between">
+          <div>
+            <p className="text-xs font-bold uppercase tracking-widest text-slate-400 mb-1">
+              Your Position in {group?.name}
+            </p>
+            <div className="flex items-center gap-3">
+              {myNet > 0.005 ? (
+                <>
+                  <TrendingUp className="w-6 h-6 text-emerald-600" />
+                  <div>
+                    <p className="text-3xl font-black text-emerald-700">{formatCurrency(myNet)}</p>
+                    <p className="text-sm text-emerald-600 font-semibold">You are owed</p>
+                  </div>
+                </>
+              ) : myNet < -0.005 ? (
+                <>
+                  <TrendingDown className="w-6 h-6 text-red-500" />
+                  <div>
+                    <p className="text-3xl font-black text-red-600">{formatCurrency(myNet)}</p>
+                    <p className="text-sm text-red-500 font-semibold">You owe</p>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <CheckCircle className="w-6 h-6 text-emerald-500" />
+                  <div>
+                    <p className="text-3xl font-black text-slate-600">₹0.00</p>
+                    <p className="text-sm text-emerald-600 font-semibold">Settled ✓</p>
+                  </div>
+                </>
+              )}
+            </div>
+            {myBalance && (
+              <p className="text-xs text-slate-400 mt-2 font-medium">
+                Paid {formatCurrency(myBalance.total_paid)} · Owed {formatCurrency(myBalance.total_owed)}
+              </p>
+            )}
+          </div>
+          <button
+            onClick={() => setShowSettleForm(!showSettleForm)}
+            className="btn-primary flex items-center gap-2 flex-shrink-0"
+          >
+            <Plus className="w-4 h-4" />
+            Record Settlement
+          </button>
+        </div>
       </div>
+
+      {/* Group Status */}
+      {balanceData && (
+        <div className={`glass-card p-4 flex items-center gap-3 border ${
+          balanceData.is_settled
+            ? 'border-emerald-200/50 bg-emerald-50/30'
+            : 'border-orange-200/50 bg-orange-50/30'
+        }`}>
+          {balanceData.is_settled ? (
+            <CheckCircle className="w-5 h-5 text-emerald-600 flex-shrink-0" />
+          ) : (
+            <AlertCircle className="w-5 h-5 text-orange-500 flex-shrink-0" />
+          )}
+          <p className="text-sm font-semibold text-slate-800">
+            {balanceData.is_settled
+              ? 'All settled! No outstanding debts in this group.'
+              : `${balanceData.settlement_suggestions?.length ?? 0} settlement${
+                  (balanceData.settlement_suggestions?.length ?? 0) !== 1 ? 's' : ''
+                } needed to clear all balances.`}
+          </p>
+        </div>
+      )}
 
       {/* Settlement Form */}
       {showSettleForm && (
-        <div className="card mb-6 border-green-200 bg-green-50">
-          <h2 className="text-lg font-semibold text-gray-900 mb-4">Record Settlement</h2>
+        <div className="glass-card-elevated p-6 border border-emerald-200/40 fade-up">
+          <div className="flex items-center gap-2 mb-5">
+            <div className="w-8 h-8 rounded-xl bg-success-gradient flex items-center justify-center shadow-success">
+              <CheckCircle className="w-4 h-4 text-white" />
+            </div>
+            <h2 className="text-lg font-bold text-slate-900">Record Settlement</h2>
+          </div>
           <form onSubmit={handleRecordSettlement} className="space-y-4">
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
               <div>
                 <label className="label">Who paid *</label>
-                <select
-                  value={settleForm.payer_id}
-                  onChange={(e) => setSettleForm((p) => ({ ...p, payer_id: e.target.value }))}
-                  className="input"
-                  required
-                >
+                <select value={settleForm.payer_id}
+                  onChange={(e) => setSettleForm(p => ({ ...p, payer_id: e.target.value }))}
+                  className="input" required>
                   <option value="">Select payer</option>
-                  {members.map((m) => (
-                    <option key={m.id} value={m.id}>
-                      {m.name}{m.id === user?.id ? ' (You)' : ''}
-                    </option>
+                  {members.map(m => (
+                    <option key={m.id} value={m.id}>{m.name}{m.id === user?.id ? ' (You)' : ''}</option>
                   ))}
                 </select>
               </div>
               <div>
                 <label className="label">Paid to *</label>
-                <select
-                  value={settleForm.receiver_id}
-                  onChange={(e) => setSettleForm((p) => ({ ...p, receiver_id: e.target.value }))}
-                  className="input"
-                  required
-                >
+                <select value={settleForm.receiver_id}
+                  onChange={(e) => setSettleForm(p => ({ ...p, receiver_id: e.target.value }))}
+                  className="input" required>
                   <option value="">Select receiver</option>
-                  {members.map((m) => (
-                    <option key={m.id} value={m.id}>
-                      {m.name}{m.id === user?.id ? ' (You)' : ''}
-                    </option>
+                  {members.map(m => (
+                    <option key={m.id} value={m.id}>{m.name}{m.id === user?.id ? ' (You)' : ''}</option>
                   ))}
                 </select>
               </div>
               <div>
                 <label className="label">Amount (₹) *</label>
-                <input
-                  type="number"
-                  value={settleForm.amount}
-                  onChange={(e) => setSettleForm((p) => ({ ...p, amount: e.target.value }))}
-                  placeholder="0.00"
-                  className="input"
-                  min="0.01"
-                  step="0.01"
-                  required
-                />
+                <input type="number" value={settleForm.amount}
+                  onChange={(e) => setSettleForm(p => ({ ...p, amount: e.target.value }))}
+                  placeholder="0.00" className="input" min="0.01" step="0.01" required />
               </div>
             </div>
             <div>
               <label className="label">Note (optional)</label>
-              <input
-                type="text"
-                value={settleForm.note}
-                onChange={(e) => setSettleForm((p) => ({ ...p, note: e.target.value }))}
-                placeholder="e.g. UPI transfer"
-                className="input"
-              />
+              <input type="text" value={settleForm.note}
+                onChange={(e) => setSettleForm(p => ({ ...p, note: e.target.value }))}
+                placeholder="e.g. UPI transfer" className="input" />
             </div>
             <div className="flex gap-3">
               <button type="submit" disabled={submitting} className="btn-success">
@@ -192,78 +253,69 @@ export default function BalancesPage() {
         </div>
       )}
 
-      {/* Overall Status */}
-      {balanceData && (
-        <div className={`card mb-6 ${balanceData.is_settled ? 'border-green-300 bg-green-50' : 'border-orange-200 bg-orange-50'}`}>
-          <div className="flex items-center gap-3">
-            {balanceData.is_settled ? (
-              <>
-                <CheckCircle className="w-6 h-6 text-green-600" />
-                <p className="font-semibold text-green-800">All settled! No outstanding debts.</p>
-              </>
-            ) : (
-              <>
-                <AlertCircle className="w-6 h-6 text-orange-500" />
-                <p className="font-semibold text-orange-800">
-                  {balanceData.settlement_suggestions?.length ?? 0} settlement
-                  {(balanceData.settlement_suggestions?.length ?? 0) !== 1 ? 's' : ''} needed
-                </p>
-              </>
-            )}
-          </div>
-        </div>
-      )}
-
-      {/* Net Balances — uses user_id and member_name from new API */}
-      {balanceData && balanceData.balances?.length > 0 && (
-        <div className="card mb-6">
-          <h2 className="text-lg font-semibold text-gray-900 mb-4">Net Balances</h2>
+      {/* Net Balances Grid */}
+      {balanceData?.balances?.length > 0 && (
+        <div className="glass-card p-6">
+          <h2 className="font-bold text-slate-900 flex items-center gap-2 mb-5">
+            <Users className="w-4 h-4 text-slate-400" />
+            Member Balances
+          </h2>
           <div className="space-y-3">
             {balanceData.balances
               .sort((a, b) => b.net_balance - a.net_balance)
-              .map((b) => {
+              .map(b => {
                 const net = Number(b.net_balance);
                 const isCurrentUser = b.user_id === user?.id;
                 return (
-                  <div
-                    key={b.user_id}
-                    className={`flex items-center justify-between py-2 border-b border-gray-100 last:border-0 ${
-                      isCurrentUser ? 'bg-blue-50/40 -mx-2 px-2 rounded-lg' : ''
-                    }`}
-                  >
+                  <div key={b.user_id}
+                    className={`flex items-center justify-between p-3 rounded-xl transition-colors ${
+                      isCurrentUser
+                        ? 'bg-brand-50/60 border border-brand-100/60'
+                        : 'bg-slate-50/40 hover:bg-slate-50/70'
+                    }`}>
                     <div className="flex items-center gap-3">
-                      <div className={`w-9 h-9 rounded-full flex items-center justify-center ${
-                        isCurrentUser ? 'bg-blue-100' : 'bg-gray-100'
-                      }`}>
-                        <span className={`font-semibold text-sm ${
-                          isCurrentUser ? 'text-blue-700' : 'text-gray-700'
-                        }`}>
+                      <div className={`w-9 h-9 rounded-full flex items-center justify-center
+                                       bg-gradient-to-br ${getAvatarColor(b.member_name)} shadow-sm`}>
+                        <span className="text-white font-bold text-sm">
                           {b.member_name?.charAt(0).toUpperCase()}
                         </span>
                       </div>
                       <div>
-                        <p className="font-medium text-gray-900">
+                        <p className="font-semibold text-slate-900 text-sm flex items-center gap-1.5">
                           {b.member_name}
-                          {isCurrentUser && (
-                            <span className="ml-1.5 text-xs bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded-full">You</span>
-                          )}
+                          {isCurrentUser && <span className="badge-indigo text-[10px]">You</span>}
                         </p>
-                        <p className="text-xs text-gray-400">
+                        <p className="text-[11px] text-slate-400">
                           Paid {formatCurrency(b.total_paid)} · Owes {formatCurrency(b.total_owed)}
                         </p>
                       </div>
                     </div>
                     <div className="text-right">
-                      <span className={`font-bold text-lg ${net > 0 ? 'text-green-600' : net < 0 ? 'text-red-600' : 'text-gray-400'}`}>
-                        {net > 0 ? '+' : ''}{formatCurrency(net)}
-                      </span>
-                      <p className="text-xs">
-                        {net > 0
-                          ? <span className="text-green-600">gets back</span>
-                          : net < 0
-                          ? <span className="text-red-600">owes</span>
-                          : <span className="text-gray-400">settled</span>}
-                      </p>
+                      {net > 0.005 ? (
+                        <div className="flex items-center gap-1">
+                          <TrendingUp className="w-3.5 h-3.5 text-emerald-600" />
+                          <div>
+                            <p className="font-black text-emerald-700 text-base">{formatCurrency(net)}</p>
+                            <p className="text-[10px] text-emerald-600 font-semibold">gets back</p>
+                          </div>
+                        </div>
+                      ) : net < -0.005 ? (
+                        <div className="flex items-center gap-1">
+                          <TrendingDown className="w-3.5 h-3.5 text-red-500" />
+                          <div>
+                            <p className="font-black text-red-600 text-base">{formatCurrency(net)}</p>
+                            <p className="text-[10px] text-red-500 font-semibold">owes</p>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="flex items-center gap-1">
+                          <Minus className="w-3.5 h-3.5 text-slate-400" />
+                          <div>
+                            <p className="font-black text-slate-400 text-base">₹0.00</p>
+                            <p className="text-[10px] text-slate-400 font-semibold">settled</p>
+                          </div>
+                        </div>
+                      )}
                     </div>
                   </div>
                 );
@@ -272,37 +324,43 @@ export default function BalancesPage() {
         </div>
       )}
 
-      {/* Settlement Suggestions — uses from_user_id / to_user_id */}
-      {balanceData && balanceData.settlement_suggestions?.length > 0 && (
-        <div className="card mb-6">
-          <h2 className="text-lg font-semibold text-gray-900 mb-4">Suggested Settlements</h2>
-          <div className="space-y-3">
+      {/* Suggested Settlements */}
+      {balanceData?.settlement_suggestions?.length > 0 && (
+        <div className="glass-card p-6">
+          <h2 className="font-bold text-slate-900 flex items-center gap-2 mb-4">
+            <ArrowRight className="w-4 h-4 text-slate-400" />
+            Suggested Settlements
+          </h2>
+          <div className="space-y-2">
             {balanceData.settlement_suggestions.map((s, i) => {
-              const involvesCurrent =
-                s.from_user_id === user?.id || s.to_user_id === user?.id;
+              const involvesCurrent = s.from_user_id === user?.id || s.to_user_id === user?.id;
               return (
-                <div
-                  key={i}
-                  className={`flex items-center justify-between p-3 rounded-lg ${
-                    involvesCurrent ? 'bg-blue-50 border border-blue-100' : 'bg-gray-50'
-                  }`}
-                >
+                <div key={i}
+                  className={`flex items-center justify-between p-4 rounded-xl ${
+                    involvesCurrent
+                      ? 'bg-brand-50/60 border border-brand-100/60'
+                      : 'bg-slate-50/50'
+                  }`}>
                   <div className="flex items-center gap-2 flex-wrap">
-                    <span className={`font-medium ${s.from_user_id === user?.id ? 'text-blue-700' : 'text-gray-900'}`}>
+                    <span className={`font-semibold text-sm ${
+                      s.from_user_id === user?.id ? 'text-brand-700' : 'text-slate-800'
+                    }`}>
                       {s.from_member_name}
                       {s.from_user_id === user?.id && ' (You)'}
                     </span>
-                    <ArrowRight className="w-4 h-4 text-gray-400" />
-                    <span className={`font-medium ${s.to_user_id === user?.id ? 'text-green-700' : 'text-gray-900'}`}>
+                    <ArrowRight className="w-4 h-4 text-slate-300 flex-shrink-0" />
+                    <span className={`font-semibold text-sm ${
+                      s.to_user_id === user?.id ? 'text-emerald-700' : 'text-slate-800'
+                    }`}>
                       {s.to_member_name}
                       {s.to_user_id === user?.id && ' (You)'}
                     </span>
-                    <span className="font-bold text-green-700 ml-1">{formatCurrency(s.amount)}</span>
+                    <span className="font-black text-emerald-700 text-sm ml-1">
+                      {formatCurrency(s.amount)}
+                    </span>
                   </div>
-                  <button
-                    onClick={() => handleUseSuggestion(s)}
-                    className="btn-secondary text-xs py-1 px-3 flex-shrink-0"
-                  >
+                  <button onClick={() => handleUseSuggestion(s)}
+                    className="btn-secondary text-xs py-1.5 px-3 flex-shrink-0">
                     Record
                   </button>
                 </div>
@@ -313,25 +371,30 @@ export default function BalancesPage() {
       )}
 
       {/* Settlement History */}
-      <div className="card">
-        <h2 className="text-lg font-semibold text-gray-900 mb-4">Settlement History</h2>
+      <div className="glass-card p-6">
+        <h2 className="font-bold text-slate-900 flex items-center gap-2 mb-4">
+          <History className="w-4 h-4 text-slate-400" />
+          Settlement History
+        </h2>
         {settlements.length === 0 ? (
-          <p className="text-gray-400 text-sm text-center py-4">No settlements recorded yet</p>
+          <p className="text-slate-400 text-sm text-center py-6">No settlements recorded yet</p>
         ) : (
           <div className="space-y-2">
-            {settlements.map((s) => (
-              <div key={s.id} className="flex items-center justify-between py-2 border-b border-gray-100 last:border-0">
+            {settlements.map(s => (
+              <div key={s.id}
+                className="flex items-center justify-between py-3 px-3 rounded-xl
+                           hover:bg-slate-50/50 transition-colors">
                 <div>
                   <div className="flex items-center gap-2 text-sm">
-                    <span className="font-medium text-gray-900">{s.payer_name}</span>
-                    <span className="text-gray-400">→</span>
-                    <span className="font-medium text-gray-900">{s.receiver_name}</span>
+                    <span className="font-semibold text-slate-900">{s.payer_name}</span>
+                    <ArrowRight className="w-3.5 h-3.5 text-slate-300" />
+                    <span className="font-semibold text-slate-900">{s.receiver_name}</span>
                   </div>
-                  <p className="text-xs text-gray-400">
+                  <p className="text-xs text-slate-400 mt-0.5">
                     {formatDate(s.created_at)}{s.note ? ` · ${s.note}` : ''}
                   </p>
                 </div>
-                <span className="font-semibold text-gray-700">{formatCurrency(s.amount)}</span>
+                <span className="font-black text-slate-700">{formatCurrency(s.amount)}</span>
               </div>
             ))}
           </div>

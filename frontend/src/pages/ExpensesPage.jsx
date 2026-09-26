@@ -1,6 +1,9 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useParams, Link } from 'react-router-dom';
-import { Plus, Trash2, Sparkles, ChevronDown, ChevronUp } from 'lucide-react';
+import {
+  Plus, Trash2, Sparkles, ChevronDown, ChevronUp, ChevronRight,
+  Receipt, User, Calendar, ChevronRight as Arrow
+} from 'lucide-react';
 import toast from 'react-hot-toast';
 import { groupsApi, expensesApi } from '../services/api';
 import { LoadingSpinner, ErrorMessage, EmptyState } from '../components/common/UI';
@@ -11,11 +14,85 @@ import { useAuth } from '../contexts/AuthContext';
 function formatCurrency(amount) {
   return `₹${Number(amount).toFixed(2)}`;
 }
-
 function formatDate(dateStr) {
   return new Date(dateStr).toLocaleDateString('en-IN', {
     day: 'numeric', month: 'short', year: 'numeric',
   });
+}
+
+const avatarColors = [
+  'from-indigo-500 to-violet-600', 'from-emerald-500 to-teal-600',
+  'from-orange-500 to-rose-500', 'from-sky-500 to-blue-600',
+  'from-pink-500 to-fuchsia-600', 'from-amber-500 to-orange-600',
+];
+function getAvatarColor(name) {
+  return avatarColors[(name || 'A').charCodeAt(0) % avatarColors.length];
+}
+
+function ExpenseCard({ expense, currentUserId, onDelete }) {
+  const [expanded, setExpanded] = useState(false);
+  const isPayer = expense.payer_id === currentUserId;
+
+  return (
+    <div className="glass-card p-5 hover:shadow-glass-hover transition-all">
+      <div className="flex items-start justify-between gap-3">
+        <div className="flex items-start gap-3 flex-1 min-w-0">
+          <div className={`w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0
+                           bg-gradient-to-br ${getAvatarColor(expense.payer_name || 'A')}`}>
+            <Receipt className="w-4 h-4 text-white" />
+          </div>
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2">
+              <p className="font-bold text-slate-900 truncate">{expense.description}</p>
+              {isPayer && (
+                <span className="badge-indigo text-[10px] flex-shrink-0">You paid</span>
+              )}
+            </div>
+            <p className="text-xs text-slate-400 mt-0.5">
+              Paid by <span className="font-semibold text-slate-600">{expense.payer_name}</span>
+              {' · '}{formatDate(expense.created_at)}
+            </p>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-2 flex-shrink-0">
+          <span className="text-lg font-black text-slate-900">{formatCurrency(expense.amount)}</span>
+          <button onClick={() => setExpanded(e => !e)}
+            className="p-1.5 text-slate-300 hover:text-slate-600 hover:bg-slate-100 rounded-lg transition-colors">
+            {expanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+          </button>
+          <button onClick={() => onDelete(expense)}
+            className="p-1.5 text-slate-200 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors">
+            <Trash2 className="w-4 h-4" />
+          </button>
+        </div>
+      </div>
+
+      {expanded && expense.participants?.length > 0 && (
+        <div className="mt-4 pt-3 border-t border-slate-100/60">
+          <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-2">
+            Split Details
+          </p>
+          <div className="space-y-1.5">
+            {expense.participants.map(p => (
+              <div key={p.user_id || p.id}
+                className="flex justify-between items-center text-sm py-0.5">
+                <span className={`${p.user_id === currentUserId ? 'font-bold text-brand-700' : 'text-slate-600'}`}>
+                  {p.name}{p.user_id === currentUserId ? ' (You)' : ''}
+                </span>
+                <span className="font-semibold text-slate-900">{formatCurrency(p.share)}</span>
+              </div>
+            ))}
+          </div>
+          {expense.note && (
+            <p className="text-xs text-slate-400 mt-3 italic border-t border-slate-100/60 pt-2">
+              {expense.note}
+            </p>
+          )}
+        </div>
+      )}
+    </div>
+  );
 }
 
 export default function ExpensesPage() {
@@ -26,14 +103,12 @@ export default function ExpensesPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
-  // UI state
   const [showManualForm, setShowManualForm] = useState(false);
   const [showAIInput, setShowAIInput] = useState(false);
   const [aiResult, setAIResult] = useState(null);
   const [aiOriginalText, setAIOriginalText] = useState('');
   const [aiWarnings, setAIWarnings] = useState([]);
 
-  // Form state — payer_id and participant_ids use MongoDB user ID strings
   const [formData, setFormData] = useState({
     description: '', amount: '', payer_id: '', participant_ids: [], note: '',
   });
@@ -57,14 +132,12 @@ export default function ExpensesPage() {
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
-  // Pre-select current user as payer when opening manual form
   const openManualForm = () => {
-    const currentMember = group?.members?.find((m) => m.id === user?.id);
+    const currentMember = group?.members?.find(m => m.id === user?.id);
     setFormData({
-      description: '',
-      amount: '',
+      description: '', amount: '',
       payer_id: currentMember?.id || '',
-      participant_ids: group?.members?.map((m) => m.id) || [],
+      participant_ids: group?.members?.map(m => m.id) || [],
       note: '',
     });
     setShowManualForm(true);
@@ -73,9 +146,9 @@ export default function ExpensesPage() {
   };
 
   const handleParticipantToggle = (memberId) => {
-    setFormData((prev) => {
+    setFormData(prev => {
       const ids = prev.participant_ids.includes(memberId)
-        ? prev.participant_ids.filter((id) => id !== memberId)
+        ? prev.participant_ids.filter(id => id !== memberId)
         : [...prev.participant_ids, memberId];
       return { ...prev, participant_ids: ids };
     });
@@ -107,8 +180,8 @@ export default function ExpensesPage() {
     await handleSubmitExpense({
       description: formData.description,
       amount: parseFloat(formData.amount),
-      payer_id: formData.payer_id, // MongoDB ObjectId string
-      participant_ids: formData.participant_ids, // Array of MongoDB ObjectId strings
+      payer_id: formData.payer_id,
+      participant_ids: formData.participant_ids,
       note: formData.note || null,
     });
   };
@@ -121,14 +194,12 @@ export default function ExpensesPage() {
   };
 
   const handleAIConfirm = async (confirmedData) => {
-    // Map member names → MongoDB user IDs
     const memberByName = Object.fromEntries(
-      (group?.members || []).map((m) => [m.name.toLowerCase(), m.id])
+      (group?.members || []).map(m => [m.name.toLowerCase(), m.id])
     );
-
     const payerId = memberByName[confirmedData.payer_name?.toLowerCase()];
     const participantIds = (confirmedData.participant_names || [])
-      .map((name) => memberByName[name.toLowerCase()])
+      .map(name => memberByName[name.toLowerCase()])
       .filter(Boolean);
 
     if (!payerId) {
@@ -139,7 +210,6 @@ export default function ExpensesPage() {
       toast.error('No valid participants found. Please use manual entry.');
       return;
     }
-
     await handleSubmitExpense({
       description: confirmedData.description,
       amount: parseFloat(confirmedData.amount),
@@ -166,40 +236,46 @@ export default function ExpensesPage() {
   const members = group?.members || [];
 
   return (
-    <div>
+    <div className="space-y-6 fade-up">
       {/* Breadcrumb */}
-      <div className="text-sm text-gray-500 mb-6">
-        <Link to="/groups" className="hover:text-blue-600">Groups</Link>
-        <span className="mx-2">/</span>
-        <Link to={`/groups/${groupId}`} className="hover:text-blue-600">{group?.name}</Link>
-        <span className="mx-2">/</span>
-        <span className="text-gray-900 font-medium">Expenses</span>
+      <div className="flex items-center gap-1.5 text-xs text-slate-400 font-medium">
+        <Link to="/groups" className="hover:text-brand-600 transition-colors">Groups</Link>
+        <ChevronRight className="w-3.5 h-3.5" />
+        <Link to={`/groups/${groupId}`} className="hover:text-brand-600 transition-colors">
+          {group?.name}
+        </Link>
+        <ChevronRight className="w-3.5 h-3.5" />
+        <span className="text-slate-700 font-semibold">Expenses</span>
       </div>
 
-      <div className="flex items-center justify-between mb-6">
-        <h1 className="text-2xl font-bold text-gray-900">Expenses</h1>
+      {/* Header */}
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-black text-slate-900">Expenses</h1>
+          <p className="text-slate-500 text-sm mt-0.5 font-medium">
+            {expenses.length} expense{expenses.length !== 1 ? 's' : ''} in {group?.name}
+          </p>
+        </div>
         <div className="flex gap-2">
           <button
             onClick={() => { setShowAIInput(!showAIInput); setShowManualForm(false); setAIResult(null); }}
-            className="btn-primary flex items-center gap-2 bg-purple-600 hover:bg-purple-700 focus:ring-purple-500"
+            className="btn-primary flex items-center gap-2"
+            style={{ background: 'linear-gradient(135deg, #7c3aed, #6366f1)' }}
           >
             <Sparkles className="w-4 h-4" />
             AI Entry
           </button>
-          <button
-            onClick={openManualForm}
-            className="btn-secondary flex items-center gap-2"
-          >
+          <button onClick={openManualForm} className="btn-secondary flex items-center gap-2">
             <Plus className="w-4 h-4" />
             Manual
           </button>
         </div>
       </div>
 
-      {/* AI Natural Language Input */}
+      {/* AI Input */}
       {showAIInput && (
         <NaturalLanguageInput
-          groupId={groupId} // MongoDB string ID
+          groupId={groupId}
           members={members}
           currentUser={user}
           onParsed={handleAIParsed}
@@ -207,7 +283,7 @@ export default function ExpensesPage() {
         />
       )}
 
-      {/* AI Confirmation Card */}
+      {/* AI Confirmation */}
       {aiResult && (
         <AIConfirmationCard
           result={aiResult}
@@ -221,97 +297,73 @@ export default function ExpensesPage() {
         />
       )}
 
-      {/* Manual Expense Form */}
+      {/* Manual Form */}
       {showManualForm && (
-        <div className="card mb-6 border-gray-300">
-          <h2 className="text-lg font-semibold text-gray-900 mb-4">Add Expense</h2>
+        <div className="glass-card-elevated p-6 border border-brand-100/60 fade-up">
+          <div className="flex items-center gap-2 mb-5">
+            <div className="w-8 h-8 rounded-xl bg-brand-gradient flex items-center justify-center shadow-brand">
+              <Plus className="w-4 h-4 text-white" />
+            </div>
+            <h2 className="text-lg font-bold text-slate-900">Add Expense</h2>
+          </div>
           <form onSubmit={handleManualSubmit} className="space-y-4">
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div>
                 <label className="label">Description *</label>
-                <input
-                  type="text"
-                  value={formData.description}
-                  onChange={(e) => setFormData((p) => ({ ...p, description: e.target.value }))}
+                <input type="text" value={formData.description}
+                  onChange={e => setFormData(p => ({ ...p, description: e.target.value }))}
                   placeholder="e.g. Dinner at restaurant"
-                  className="input"
-                  required
-                  autoFocus
-                  maxLength={500}
-                />
+                  className="input" required autoFocus maxLength={500} />
               </div>
               <div>
                 <label className="label">Amount (₹) *</label>
-                <input
-                  type="number"
-                  value={formData.amount}
-                  onChange={(e) => setFormData((p) => ({ ...p, amount: e.target.value }))}
-                  placeholder="0.00"
-                  className="input"
-                  min="0.01"
-                  step="0.01"
-                  required
-                />
+                <input type="number" value={formData.amount}
+                  onChange={e => setFormData(p => ({ ...p, amount: e.target.value }))}
+                  placeholder="0.00" className="input" min="0.01" step="0.01" required />
               </div>
             </div>
 
-            {/* Payer — select from group members using user ID */}
             <div>
               <label className="label">Paid by *</label>
-              <select
-                value={formData.payer_id}
-                onChange={(e) => setFormData((p) => ({ ...p, payer_id: e.target.value }))}
-                className="input"
-                required
-              >
+              <select value={formData.payer_id}
+                onChange={e => setFormData(p => ({ ...p, payer_id: e.target.value }))}
+                className="input" required>
                 <option value="">Select who paid</option>
-                {members.map((m) => (
-                  <option key={m.id} value={m.id}>
-                    {m.name}{m.id === user?.id ? ' (You)' : ''}
-                  </option>
+                {members.map(m => (
+                  <option key={m.id} value={m.id}>{m.name}{m.id === user?.id ? ' (You)' : ''}</option>
                 ))}
               </select>
             </div>
 
-            {/* Participants — toggle by user ID */}
             <div>
-              <label className="label">Split between (select participants) *</label>
+              <label className="label">Split between *</label>
               <div className="flex flex-wrap gap-2 mt-1">
-                {members.map((m) => (
-                  <button
-                    key={m.id}
-                    type="button"
+                {members.map(m => (
+                  <button key={m.id} type="button"
                     onClick={() => handleParticipantToggle(m.id)}
-                    className={`px-3 py-1.5 rounded-full text-sm font-medium border transition-colors ${
+                    className={`px-3 py-1.5 rounded-full text-sm font-semibold border transition-all ${
                       formData.participant_ids.includes(m.id)
-                        ? 'bg-blue-600 text-white border-blue-600'
-                        : 'bg-white text-gray-700 border-gray-300 hover:border-blue-400'
-                    }`}
-                  >
+                        ? 'bg-brand-gradient text-white border-transparent shadow-brand'
+                        : 'bg-white/60 text-slate-700 border-slate-200 hover:border-brand-300'
+                    }`}>
                     {m.name}{m.id === user?.id ? ' (You)' : ''}
                   </button>
                 ))}
               </div>
-              {formData.participant_ids.length > 0 && (
-                <p className="text-xs text-gray-500 mt-1">
-                  Each pays:{' '}
-                  {formData.amount
-                    ? `₹${(parseFloat(formData.amount) / formData.participant_ids.length).toFixed(2)}`
-                    : '—'}
+              {formData.participant_ids.length > 0 && formData.amount && (
+                <p className="text-xs text-slate-500 mt-1.5 font-medium">
+                  Each pays: <span className="font-bold text-slate-700">
+                    ₹{(parseFloat(formData.amount) / formData.participant_ids.length).toFixed(2)}
+                  </span>
                 </p>
               )}
             </div>
 
             <div>
               <label className="label">Note (optional)</label>
-              <input
-                type="text"
-                value={formData.note}
-                onChange={(e) => setFormData((p) => ({ ...p, note: e.target.value }))}
-                placeholder="Any additional note"
-                className="input"
-                maxLength={500}
-              />
+              <input type="text" value={formData.note}
+                onChange={e => setFormData(p => ({ ...p, note: e.target.value }))}
+                placeholder="Any additional note" className="input" maxLength={500} />
             </div>
 
             <div className="flex gap-3 pt-2">
@@ -331,78 +383,19 @@ export default function ExpensesPage() {
         <EmptyState
           icon="🧾"
           title="No expenses yet"
-          description="Add your first expense using AI or the manual form"
+          description="Add your first expense using AI or the manual form above"
         />
       ) : (
-        <div className="space-y-3">
-          {expenses.map((expense) => (
-            <ExpenseCard
-              key={expense.id}
-              expense={expense}
-              currentUserId={user?.id}
-              onDelete={handleDeleteExpense}
-            />
+        <div className="space-y-3 stagger-2">
+          {expenses.map((expense, i) => (
+            <div key={expense.id} className={`stagger-${Math.min(i + 1, 6)}`}>
+              <ExpenseCard
+                expense={expense}
+                currentUserId={user?.id}
+                onDelete={handleDeleteExpense}
+              />
+            </div>
           ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function ExpenseCard({ expense, currentUserId, onDelete }) {
-  const [expanded, setExpanded] = useState(false);
-
-  return (
-    <div className="card hover:shadow-md transition-shadow">
-      <div className="flex items-start justify-between">
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2">
-            <p className="font-semibold text-gray-900 truncate">{expense.description}</p>
-            {expense.payer_id === currentUserId && (
-              <span className="text-xs bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded-full font-medium flex-shrink-0">
-                You paid
-              </span>
-            )}
-          </div>
-          <p className="text-sm text-gray-500 mt-0.5">
-            Paid by <span className="font-medium text-gray-700">{expense.payer_name}</span>
-            {' · '}
-            {formatDate(expense.created_at)}
-          </p>
-        </div>
-        <div className="flex items-center gap-3 ml-3">
-          <span className="text-lg font-bold text-gray-900">{formatCurrency(expense.amount)}</span>
-          <button
-            onClick={() => setExpanded(!expanded)}
-            className="p-1 text-gray-400 hover:text-gray-600"
-          >
-            {expanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
-          </button>
-          <button
-            onClick={() => onDelete(expense)}
-            className="p-1 text-gray-300 hover:text-red-500 hover:bg-red-50 rounded transition-colors"
-          >
-            <Trash2 className="w-4 h-4" />
-          </button>
-        </div>
-      </div>
-
-      {expanded && expense.participants && expense.participants.length > 0 && (
-        <div className="mt-4 pt-3 border-t border-gray-100">
-          <p className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-2">Split Details</p>
-          <div className="space-y-1">
-            {expense.participants.map((p) => (
-              <div key={p.user_id || p.id} className="flex justify-between text-sm">
-                <span className={`text-gray-700 ${p.user_id === currentUserId ? 'font-medium' : ''}`}>
-                  {p.name}{p.user_id === currentUserId ? ' (You)' : ''}
-                </span>
-                <span className="font-medium text-gray-900">{formatCurrency(p.share)}</span>
-              </div>
-            ))}
-          </div>
-          {expense.note && (
-            <p className="text-xs text-gray-400 mt-2 italic">{expense.note}</p>
-          )}
         </div>
       )}
     </div>

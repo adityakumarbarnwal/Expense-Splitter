@@ -103,7 +103,8 @@ async def _build_group_response(db, group: dict) -> GroupResponse:
 
 @router.get("", response_model=list[GroupListItem])
 async def list_groups(current_user=Depends(get_current_user)):
-    """List all groups the authenticated user belongs to."""
+    """List all groups the authenticated user belongs to, with net position."""
+    from app.services.balance_engine import calculate_group_balances
     db = get_database()
     user_id = str(current_user["_id"])
 
@@ -114,12 +115,33 @@ async def list_groups(current_user=Depends(get_current_user)):
 
     result = []
     for g in groups:
+        group_id_str = str(g["_id"])
+        member_ids: list[str] = g.get("member_ids", [])
+
+        # Fetch member names for balance engine
+        member_names: dict[str, str] = {}
+        async for u in db.users.find(
+            {"_id": {"$in": [ObjectId(uid) for uid in member_ids if ObjectId.is_valid(uid)]}},
+            {"name": 1},
+        ):
+            member_names[str(u["_id"])] = u.get("name", "Unknown")
+
+        # Calculate net position for current user
+        user_net_balance = None
+        try:
+            balances = await calculate_group_balances(db, group_id_str, member_ids, member_names)
+            if user_id in balances:
+                user_net_balance = balances[user_id]["net_balance"]
+        except Exception as e:
+            logger.warning("Balance calc failed for group %s: %s", group_id_str, e)
+
         result.append(GroupListItem(
-            id=str(g["_id"]),
+            id=group_id_str,
             name=g["name"],
             description=g.get("description"),
             member_count=len(g.get("member_ids", [])),
             created_at=g["created_at"],
+            user_net_balance=user_net_balance,
         ))
     return result
 

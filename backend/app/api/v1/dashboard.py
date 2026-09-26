@@ -35,6 +35,7 @@ async def get_dashboard(current_user=Depends(get_current_user)):
     # 2. Compute balances across all groups
     total_you_owe = 0.0
     total_you_are_owed = 0.0
+    group_net_balances: dict[str, float] = {}  # group_id → user net balance
 
     for group in groups:
         group_id = str(group["_id"])
@@ -56,6 +57,7 @@ async def get_dashboard(current_user=Depends(get_current_user)):
 
         if user_id in balances:
             net = balances[user_id]["net_balance"]
+            group_net_balances[group_id] = net
             if net > 0:
                 total_you_are_owed += net
             elif net < 0:
@@ -89,7 +91,7 @@ async def get_dashboard(current_user=Depends(get_current_user)):
         for e in recent_expenses_raw
     ]
 
-    # 4. Group list items
+    # 4. Group list items — include per-group net balance
     group_items = [
         GroupListItem(
             id=str(g["_id"]),
@@ -97,6 +99,7 @@ async def get_dashboard(current_user=Depends(get_current_user)):
             description=g.get("description"),
             member_count=len(g.get("member_ids", [])),
             created_at=g["created_at"],
+            user_net_balance=group_net_balances.get(str(g["_id"])),
         )
         for g in groups[:5]  # Show top 5 recent groups on dashboard
     ]

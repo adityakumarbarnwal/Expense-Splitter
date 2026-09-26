@@ -120,3 +120,14 @@ export const aiApi = {
   // New endpoint routed per-group
   parseExpense: (groupId, data) => expensesApi.parseAI(groupId, data),
 };
+
+// ===========================
+// Insights API
+// ===========================
+
+export const insightsApi = {
+  getGroupInsights: (groupId) =>
+    apiClient.get(`/groups/${groupId}/insights`).then((r) => r.data),
+  getAIInsights: (groupId, stats) =>
+    apiClient.post(`/groups/${groupId}/insights/ai`, { stats }).then((r) => r.data),
+};

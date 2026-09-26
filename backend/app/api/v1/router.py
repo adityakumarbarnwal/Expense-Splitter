@@ -3,7 +3,7 @@ API v1 Router — collects all route modules.
 """
 
 from fastapi import APIRouter
-from app.api.v1 import auth, users, groups, expenses, balances, notifications, ai, dashboard
+from app.api.v1 import auth, users, groups, expenses, balances, notifications, ai, dashboard, insights
 
 router = APIRouter(prefix="/api/v1")
 
@@ -15,3 +15,4 @@ router.include_router(balances.router)
 router.include_router(notifications.router)
 router.include_router(ai.router)
 router.include_router(dashboard.router)
+router.include_router(insights.router)

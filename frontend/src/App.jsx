@@ -16,6 +16,7 @@ import GroupDetailPage from './pages/GroupDetailPage';
 import ExpensesPage from './pages/ExpensesPage';
 import BalancesPage from './pages/BalancesPage';
 import ProfilePage from './pages/ProfilePage';
+import GroupInsightsPage from './pages/GroupInsightsPage';
 
 /**
  * RootRedirect — / redirects to /dashboard if logged in, /login otherwise.
@@ -62,6 +63,7 @@ function App() {
             <Route path="groups/:groupId" element={<GroupDetailPage />} />
             <Route path="groups/:groupId/expenses" element={<ExpensesPage />} />
             <Route path="groups/:groupId/balances" element={<BalancesPage />} />
+            <Route path="groups/:groupId/insights" element={<GroupInsightsPage />} />
             <Route path="profile" element={<ProfilePage />} />
           </Route>
 

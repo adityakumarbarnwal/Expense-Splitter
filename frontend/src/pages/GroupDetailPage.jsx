@@ -1,10 +1,27 @@
 import React, { useState, useEffect } from 'react';
-import { useParams, Link } from 'react-router-dom';
-import { Plus, Trash2, Receipt, BarChart3, UserPlus, Pencil, Check, X } from 'lucide-react';
+import { useParams, Link, NavLink, Outlet } from 'react-router-dom';
+import {
+  Plus, Trash2, Receipt, BarChart3, UserPlus, Pencil, Check, X,
+  Users, BarChart2, Sparkles, ChevronRight
+} from 'lucide-react';
 import toast from 'react-hot-toast';
 import { groupsApi } from '../services/api';
 import { LoadingSpinner, ErrorMessage } from '../components/common/UI';
 import { useAuth } from '../contexts/AuthContext';
+
+const avatarColors = [
+  'from-indigo-500 to-violet-600',
+  'from-emerald-500 to-teal-600',
+  'from-orange-500 to-rose-500',
+  'from-sky-500 to-blue-600',
+  'from-pink-500 to-fuchsia-600',
+  'from-amber-500 to-orange-600',
+];
+
+function getAvatarColor(name) {
+  const c = (name || 'A').charCodeAt(0) % avatarColors.length;
+  return avatarColors[c];
+}
 
 export default function GroupDetailPage() {
   const { groupId } = useParams();
@@ -13,12 +30,10 @@ export default function GroupDetailPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
-  // Add member by email
   const [newMemberEmail, setNewMemberEmail] = useState('');
   const [addingMember, setAddingMember] = useState(false);
   const [showAddForm, setShowAddForm] = useState(false);
 
-  // Rename group
   const [editingName, setEditingName] = useState(false);
   const [newGroupName, setNewGroupName] = useState('');
   const [renamingGroup, setRenamingGroup] = useState(false);
@@ -37,15 +52,13 @@ export default function GroupDetailPage() {
 
   useEffect(() => { fetchGroup(); }, [groupId]);
 
-  // --- Add member by email ---
   const handleAddMember = async (e) => {
     e.preventDefault();
     if (!newMemberEmail.trim()) return;
-
     setAddingMember(true);
     try {
       await groupsApi.addMember(groupId, { email: newMemberEmail.trim() });
-      toast.success(`Member added to group`);
+      toast.success('Member added to group');
       setNewMemberEmail('');
       setShowAddForm(false);
       fetchGroup();
@@ -56,13 +69,11 @@ export default function GroupDetailPage() {
     }
   };
 
-  // --- Remove member (uses MongoDB user _id) ---
   const handleRemoveMember = async (member) => {
-    if (member.id === user?.id) {
-      if (!window.confirm('Remove yourself from this group?')) return;
-    } else {
-      if (!window.confirm(`Remove ${member.name} from the group?`)) return;
-    }
+    const msg = member.id === user?.id
+      ? 'Remove yourself from this group?'
+      : `Remove ${member.name} from the group?`;
+    if (!window.confirm(msg)) return;
     try {
       await groupsApi.removeMember(groupId, member.id);
       toast.success(`${member.name} removed`);
@@ -72,7 +83,6 @@ export default function GroupDetailPage() {
     }
   };
 
-  // --- Rename group ---
   const handleStartRename = () => {
     setNewGroupName(group.name);
     setEditingName(true);
@@ -102,119 +112,137 @@ export default function GroupDetailPage() {
   if (!group) return null;
 
   const members = group.members || [];
+  const initial = group.name.charAt(0).toUpperCase();
+  const avatarColor = getAvatarColor(group.name);
+
+  const navItems = [
+    { to: `/groups/${groupId}/expenses`, label: 'Expenses', icon: <Receipt className="w-4 h-4" /> },
+    { to: `/groups/${groupId}/balances`, label: 'Balances', icon: <BarChart3 className="w-4 h-4" /> },
+    { to: `/groups/${groupId}/insights`, label: 'Insights', icon: <BarChart2 className="w-4 h-4" /> },
+  ];
 
   return (
-    <div>
+    <div className="space-y-6 fade-up">
       {/* Breadcrumb */}
-      <div className="text-sm text-gray-500 mb-6">
-        <Link to="/groups" className="hover:text-blue-600">Groups</Link>
-        <span className="mx-2">/</span>
-        <span className="text-gray-900 font-medium">{group.name}</span>
+      <div className="flex items-center gap-1.5 text-xs text-slate-400 font-medium">
+        <Link to="/groups" className="hover:text-brand-600 transition-colors">Groups</Link>
+        <ChevronRight className="w-3.5 h-3.5" />
+        <span className="text-slate-700">{group.name}</span>
       </div>
 
-      {/* Group Header */}
-      <div className="flex items-start justify-between mb-8">
-        <div className="flex-1 min-w-0">
-          {/* Inline rename */}
-          {editingName ? (
-            <form onSubmit={handleRenameGroup} className="flex items-center gap-2">
-              <input
-                type="text"
-                value={newGroupName}
-                onChange={(e) => setNewGroupName(e.target.value)}
-                className="input text-2xl font-bold py-1 max-w-xs"
-                autoFocus
-                required
-                maxLength={255}
-              />
-              <button
-                type="submit"
-                disabled={renamingGroup || !newGroupName.trim()}
-                className="p-1.5 text-green-600 hover:bg-green-50 rounded-lg transition-colors"
-                title="Save name"
-              >
-                <Check className="w-5 h-5" />
-              </button>
-              <button
-                type="button"
-                onClick={() => setEditingName(false)}
-                className="p-1.5 text-gray-400 hover:bg-gray-100 rounded-lg transition-colors"
-                title="Cancel"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </form>
-          ) : (
-            <div className="flex items-center gap-3">
-              <h1 className="text-3xl font-bold text-gray-900">{group.name}</h1>
-              <button
-                onClick={handleStartRename}
-                className="p-1.5 text-gray-300 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"
-                title="Rename group"
-              >
-                <Pencil className="w-4 h-4" />
-              </button>
+      {/* Group Header Card */}
+      <div className="glass-card p-6">
+        <div className="flex items-start justify-between">
+          <div className="flex items-start gap-4 flex-1 min-w-0">
+            {/* Avatar */}
+            <div className={`w-14 h-14 bg-gradient-to-br ${avatarColor} rounded-2xl
+                              flex items-center justify-center flex-shrink-0 shadow-glass`}>
+              <span className="text-white font-black text-xl">{initial}</span>
             </div>
-          )}
-          {group.description && <p className="text-gray-500 mt-1">{group.description}</p>}
-          <p className="text-sm text-gray-400 mt-1">
-            {members.length} member{members.length !== 1 ? 's' : ''}
-          </p>
+
+            {/* Name + rename */}
+            <div className="flex-1 min-w-0">
+              {editingName ? (
+                <form onSubmit={handleRenameGroup} className="flex items-center gap-2 mb-1">
+                  <input
+                    type="text"
+                    value={newGroupName}
+                    onChange={(e) => setNewGroupName(e.target.value)}
+                    className="input text-lg font-bold py-1 max-w-xs"
+                    autoFocus
+                    required
+                    maxLength={255}
+                  />
+                  <button type="submit" disabled={renamingGroup || !newGroupName.trim()}
+                    className="p-1.5 text-emerald-600 hover:bg-emerald-50 rounded-lg transition-colors">
+                    <Check className="w-4 h-4" />
+                  </button>
+                  <button type="button" onClick={() => setEditingName(false)}
+                    className="p-1.5 text-slate-400 hover:bg-slate-100 rounded-lg transition-colors">
+                    <X className="w-4 h-4" />
+                  </button>
+                </form>
+              ) : (
+                <div className="flex items-center gap-2 mb-1">
+                  <h1 className="text-2xl font-black text-slate-900 truncate">{group.name}</h1>
+                  <button onClick={handleStartRename}
+                    className="p-1.5 text-slate-300 hover:text-slate-600 hover:bg-slate-100 rounded-lg transition-colors">
+                    <Pencil className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              )}
+              {group.description && (
+                <p className="text-slate-500 text-sm">{group.description}</p>
+              )}
+              <div className="flex items-center gap-2 mt-2">
+                <div className="flex -space-x-1.5">
+                  {members.slice(0, 5).map(m => (
+                    <div key={m.id}
+                      className={`w-6 h-6 rounded-full border-2 border-white flex items-center justify-center
+                                  bg-gradient-to-br ${getAvatarColor(m.name)} text-white text-[9px] font-bold`}>
+                      {m.name.charAt(0).toUpperCase()}
+                    </div>
+                  ))}
+                  {members.length > 5 && (
+                    <div className="w-6 h-6 rounded-full border-2 border-white bg-slate-100 flex items-center justify-center
+                                    text-slate-600 text-[9px] font-bold">
+                      +{members.length - 5}
+                    </div>
+                  )}
+                </div>
+                <span className="text-xs text-slate-500 font-medium">
+                  {members.length} member{members.length !== 1 ? 's' : ''}
+                </span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Quick nav tabs */}
+        <div className="flex gap-2 mt-5 pt-5 border-t border-slate-100/60 flex-wrap">
+          {navItems.map(item => (
+            <Link
+              key={item.to}
+              to={item.to}
+              className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-sm font-semibold
+                         bg-white/60 hover:bg-brand-50 border border-slate-100 hover:border-brand-200
+                         text-slate-600 hover:text-brand-700 transition-all"
+            >
+              {item.icon}
+              {item.label}
+            </Link>
+          ))}
         </div>
       </div>
 
-      {/* Quick Navigation */}
-      <div className="grid grid-cols-2 gap-4 mb-8">
-        <Link
-          to={`/groups/${groupId}/expenses`}
-          className="card hover:border-blue-300 hover:shadow-md transition-all flex items-center gap-3 cursor-pointer"
-        >
-          <div className="w-10 h-10 bg-blue-100 rounded-lg flex items-center justify-center">
-            <Receipt className="w-5 h-5 text-blue-600" />
-          </div>
-          <div>
-            <p className="font-semibold text-gray-900">Expenses</p>
-            <p className="text-sm text-gray-500">View & add expenses</p>
-          </div>
-        </Link>
-        <Link
-          to={`/groups/${groupId}/balances`}
-          className="card hover:border-green-300 hover:shadow-md transition-all flex items-center gap-3 cursor-pointer"
-        >
-          <div className="w-10 h-10 bg-green-100 rounded-lg flex items-center justify-center">
-            <BarChart3 className="w-5 h-5 text-green-600" />
-          </div>
-          <div>
-            <p className="font-semibold text-gray-900">Balances</p>
-            <p className="text-sm text-gray-500">Who owes whom</p>
-          </div>
-        </Link>
-      </div>
-
       {/* Members Section */}
-      <div className="card">
+      <div className="glass-card p-6">
         <div className="flex items-center justify-between mb-4">
-          <h2 className="text-lg font-semibold text-gray-900">
-            Members ({members.length})
+          <h2 className="font-bold text-slate-900 flex items-center gap-2">
+            <Users className="w-4 h-4 text-slate-400" />
+            Members <span className="text-slate-400 font-normal">({members.length})</span>
           </h2>
           <button
             onClick={() => setShowAddForm(!showAddForm)}
-            className="btn-secondary flex items-center gap-2 text-sm py-1.5"
+            className="btn-secondary flex items-center gap-1.5 text-sm py-1.5"
           >
-            <UserPlus className="w-4 h-4" />
+            <UserPlus className="w-3.5 h-3.5" />
             Add Member
           </button>
         </div>
 
-        {/* Add Member Form — by email (registered users only) */}
+        {/* Add Member Form */}
         {showAddForm && (
-          <form onSubmit={handleAddMember} className="mb-4">
-            <div className="flex gap-3">
+          <form onSubmit={handleAddMember} className="mb-4 p-4 bg-brand-50/40 rounded-xl border border-brand-100/60">
+            <p className="text-xs font-semibold text-slate-500 mb-2">
+              Add by email — must already be registered with SplitIt.
+            </p>
+            <div className="flex gap-2">
               <input
                 type="email"
                 value={newMemberEmail}
                 onChange={(e) => setNewMemberEmail(e.target.value)}
-                placeholder="member@example.com (must be registered)"
+                placeholder="member@example.com"
                 className="input flex-1"
                 required
                 autoFocus
@@ -222,53 +250,57 @@ export default function GroupDetailPage() {
               <button type="submit" disabled={addingMember || !newMemberEmail.trim()} className="btn-primary">
                 {addingMember ? 'Adding...' : 'Add'}
               </button>
-              <button
-                type="button"
-                onClick={() => { setShowAddForm(false); setNewMemberEmail(''); }}
-                className="btn-secondary"
-              >
+              <button type="button" onClick={() => { setShowAddForm(false); setNewMemberEmail(''); }}
+                className="btn-secondary">
                 Cancel
               </button>
             </div>
-            <p className="text-xs text-gray-400 mt-1.5">
-              The user must already be registered with SplitSmart.
-            </p>
           </form>
         )}
 
-        {/* Members List */}
+        {/* Member List */}
         {members.length === 0 ? (
-          <div className="text-center py-8 text-gray-400">
-            <p className="text-4xl mb-2">👤</p>
-            <p>No members yet. Add members by their email address.</p>
+          <div className="text-center py-8 text-slate-400">
+            <div className="text-3xl mb-2">👤</div>
+            <p className="text-sm">No members yet. Add members by their email address.</p>
           </div>
         ) : (
-          <ul className="divide-y divide-gray-100">
-            {members.map((member) => (
-              <li key={member.id} className="flex items-center justify-between py-3">
-                <div className="flex items-center gap-3">
-                  <div className="w-9 h-9 bg-blue-100 rounded-full flex items-center justify-center">
-                    <span className="text-blue-700 font-semibold text-sm">
-                      {member.name.charAt(0).toUpperCase()}
-                    </span>
+          <ul className="space-y-1">
+            {members.map(member => {
+              const isYou = member.id === user?.id;
+              return (
+                <li key={member.id}
+                  className={`flex items-center justify-between py-3 px-2 rounded-xl transition-colors ${
+                    isYou ? 'bg-brand-50/40' : 'hover:bg-slate-50/40'
+                  }`}>
+                  <div className="flex items-center gap-3">
+                    <div className={`w-9 h-9 rounded-full flex items-center justify-center
+                                    bg-gradient-to-br ${getAvatarColor(member.name)} shadow-sm`}>
+                      <span className="text-white font-bold text-sm">
+                        {member.name.charAt(0).toUpperCase()}
+                      </span>
+                    </div>
+                    <div>
+                      <div className="flex items-center gap-1.5">
+                        <span className="font-semibold text-slate-900 text-sm">{member.name}</span>
+                        {isYou && (
+                          <span className="badge-indigo text-[10px]">You</span>
+                        )}
+                      </div>
+                      <p className="text-xs text-slate-400">{member.email}</p>
+                    </div>
                   </div>
-                  <div>
-                    <span className="font-medium text-gray-900">{member.name}</span>
-                    {member.id === user?.id && (
-                      <span className="ml-2 text-xs bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded-full">You</span>
-                    )}
-                    <p className="text-xs text-gray-400">{member.email}</p>
-                  </div>
-                </div>
-                <button
-                  onClick={() => handleRemoveMember(member)}
-                  className="p-1.5 text-gray-300 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors"
-                  title={`Remove ${member.name}`}
-                >
-                  <Trash2 className="w-4 h-4" />
-                </button>
-              </li>
-            ))}
+                  <button
+                    onClick={() => handleRemoveMember(member)}
+                    className="p-1.5 text-slate-200 hover:text-red-500 hover:bg-red-50
+                               rounded-lg transition-colors"
+                    title={`Remove ${member.name}`}
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
+                </li>
+              );
+            })}
           </ul>
         )}
       </div>
