@@ -23,8 +23,8 @@ function formatDate(dateStr) {
 function greet(name) {
   const h = new Date().getHours();
   const first = name?.split(' ')[0] || 'there';
-  if (h < 12) return `Good morning, ${first} ☀️`;
-  if (h < 17) return `Good afternoon, ${first} 👋`;
+  if (h < 12) return `Good morning, ${first}`;
+  if (h < 17) return `Good afternoon, ${first}`;
   return `Good evening, ${first} 🌙`;
 }
 

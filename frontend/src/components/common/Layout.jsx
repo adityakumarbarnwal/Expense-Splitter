@@ -138,7 +138,7 @@ export default function Layout() {
       {/* Footer */}
       <footer className="mt-16 py-6 text-center">
         <p className="text-xs text-slate-400 font-medium">
-          SplitIt — Smart group expenses, simplified · DSC4141 Academic Project
+          SplitIt — Smart group expenses, simplified
         </p>
       </footer>
     </div>
