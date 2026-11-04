@@ -16,7 +16,7 @@ from datetime import datetime, timedelta, timezone
 
 import bcrypt
 from bson import ObjectId
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Response, status
 from jose import JWTError, jwt
 
 from app.core.auth import (
@@ -165,26 +165,36 @@ async def get_me(current_user=Depends(get_current_user)):
 
 
 @router.post("/forgot-password", response_model=MessageResponse)
-async def forgot_password(
-    data: ForgotPasswordRequest,
-    background_tasks: BackgroundTasks,
-):
+async def forgot_password(data: ForgotPasswordRequest):
     """
     Request password reset OTP.
 
     - Normalizes email to lowercase
-    - Returns generic message regardless of email existence (privacy)
-    - Rate limits to 3 requests per 5 minutes
-    - Generates 6-digit OTP, hashes it with bcrypt, saves to db.password_reset_otps
-    - Sends OTP via email (fire-and-forget)
+    - Returns SAME generic message whether email exists or not (privacy)
+    - Rate limits: max 3 OTP requests per 5 minutes per email
+    - Generates cryptographically secure 6-digit OTP
+    - Stores ONLY the bcrypt hash — never the plaintext OTP
+    - Awaits email delivery; deletes OTP from DB if delivery fails
+    - If MAIL_ENABLED=False, returns generic message without storing OTP
     """
     db = get_database()
     email = data.email.lower().strip()
     generic_message = "If an account exists for this email, a password-reset OTP has been sent."
 
+    # Privacy: same response whether email is registered or not
     user = await db.users.find_one({"email": email})
     if not user:
-        logger.info("Password reset requested for non-existent email (not revealing)")
+        logger.info("Password reset requested for non-registered email (not revealing to caller)")
+        return MessageResponse(message=generic_message)
+
+    # If email is disabled, log and return generic message — do NOT store an OTP
+    # (storing an OTP with no way to deliver it creates phantom reset tokens)
+    if not settings.mail_enabled:
+        logger.warning(
+            "MAIL_ENABLED=False — OTP not generated for %s. "
+            "Set MAIL_ENABLED=True and configure SMTP to enable password reset emails.",
+            email,
+        )
         return MessageResponse(message=generic_message)
 
     # Rate limiting: count OTPs created in last 5 minutes for this email
@@ -203,23 +213,23 @@ async def forgot_password(
             detail="Too many OTP requests. Please wait before trying again.",
         )
 
-    # Record in audit collection so rate limiting works across deletes
+    # Record in audit collection (rate-limiting survives OTP deletion)
     await db.password_reset_audit.insert_one({
         "email": email,
         "created_at": datetime.now(timezone.utc),
     })
 
-    # Generate 6-digit OTP: secrets.randbelow(1000000) formatted as f"{otp:06d}"
+    # Generate cryptographically secure 6-digit OTP
     otp_val = secrets.randbelow(1000000)
     otp_str = f"{otp_val:06d}"
 
-    # Hash OTP using bcrypt
+    # Store ONLY the bcrypt hash — never log or return the plaintext OTP
     otp_hash = bcrypt.hashpw(otp_str.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
 
-    # Delete any previous OTPs for this email
+    # Invalidate any previous unused OTPs for this email
     await db.password_reset_otps.delete_many({"email": email})
 
-    # Insert new OTP doc with expires_at = now + 10 minutes
+    # Persist new OTP (expires in 10 minutes)
     now = datetime.now(timezone.utc)
     otp_doc = {
         "email": email,
@@ -229,18 +239,30 @@ async def forgot_password(
         "attempts": 0,
         "created_at": now,
     }
-    await db.password_reset_otps.insert_one(otp_doc)
+    inserted = await db.password_reset_otps.insert_one(otp_doc)
+    otp_id = inserted.inserted_id
 
-    # Fire-and-forget email
-    background_tasks.add_task(
-        send_password_reset_otp_email,
+    # Send OTP email — AWAITED so failures are caught here, not silently dropped
+    email_sent = await send_password_reset_otp_email(
         to_email=email,
         to_name=user.get("name", "User"),
         otp=otp_str,
     )
 
-    logger.info("Password reset OTP generated for %s", email)
+    if not email_sent:
+        # Clean up the OTP so it cannot be used without the email being delivered
+        await db.password_reset_otps.delete_one({"_id": otp_id})
+        logger.error(
+            "OTP email delivery failed for %s — OTP invalidated to prevent phantom reset tokens",
+            email,
+        )
+        # Still return generic message (do not reveal internal error or account existence)
+        return MessageResponse(message=generic_message)
+
+    logger.info("Password reset OTP generated and email dispatched for %s", email)
     return MessageResponse(message=generic_message)
+
+
 
 
 @router.post("/verify-otp", response_model=VerifyOTPResponse)
