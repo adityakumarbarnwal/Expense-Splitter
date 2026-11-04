@@ -286,16 +286,15 @@ Rules:
 - Do NOT invent numbers — only use the stats provided
 - If group has no expenses, say so in summary"""
 
-        # Wrap the synchronous Gemini SDK call so it does not block the event loop.
-        # The 20-second timeout surfaces slow API responses rather than hanging the request.
-        import concurrent.futures
+        # Run in a shared thread-pool executor so the event loop is never blocked.
+        # 25-second timeout matches the frontend insightsApi.getAIInsights timeout.
+        from app.api.v1.ai import _gemini_executor
         loop = asyncio.get_event_loop()
-        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-            gen_future = loop.run_in_executor(pool, model.generate_content, prompt)
-            try:
-                response = await asyncio.wait_for(gen_future, timeout=20.0)
-            except asyncio.TimeoutError:
-                raise Exception('Gemini API timed out after 20 seconds')
+        gen_future = loop.run_in_executor(_gemini_executor, model.generate_content, prompt)
+        try:
+            response = await asyncio.wait_for(gen_future, timeout=25.0)
+        except asyncio.TimeoutError:
+            raise Exception('Gemini API timed out after 25 seconds')
         raw = response.text.strip()
 
         # Strip markdown code fences if present

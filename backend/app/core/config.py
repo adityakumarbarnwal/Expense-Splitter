@@ -31,7 +31,7 @@ class Settings(BaseSettings):
 
     # AI / Gemini
     gemini_api_key: str = ""
-    gemini_model: str = "gemini-3.8-flash"
+    gemini_model: str = "gemini-2.5-flash"
 
     # Email
     mail_username: str = ""

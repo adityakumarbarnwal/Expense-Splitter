@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Sparkles, AlertCircle, Lightbulb } from 'lucide-react';
 import { expensesApi } from '../../services/api';
+import MemberDropdown from '../common/MemberDropdown';
 
 /**
  * NaturalLanguageInput — AI-powered expense entry.
@@ -14,6 +15,7 @@ import { expensesApi } from '../../services/api';
 export default function NaturalLanguageInput({ groupId, members, currentUser, onParsed, onCancel }) {
   const [text, setText] = useState('');
   const [selectedMemberName, setSelectedMemberName] = useState(
+    // Pre-select the current user if they are in the group
     currentUser ? (members.find((m) => m.id === currentUser.id)?.name || '') : ''
   );
   const [parsing, setParsing] = useState(false);
@@ -27,7 +29,7 @@ export default function NaturalLanguageInput({ groupId, members, currentUser, on
 
   const handleParse = async (e) => {
     e.preventDefault();
-    if (!text.trim()) return;
+    if (!text.trim() || parsing) return;
 
     setParsing(true);
     setError(null);
@@ -68,23 +70,19 @@ export default function NaturalLanguageInput({ groupId, members, currentUser, on
       </div>
 
       <form onSubmit={handleParse} className="space-y-4">
-        {/* Who are you? */}
+        {/* Who are you? — Custom dropdown */}
         <div>
           <label className="label text-xs">
             Who are you? <span className="text-slate-400 font-normal">(helps resolve "I", "me")</span>
           </label>
-          <select
+          <MemberDropdown
+            members={members}
+            currentUserId={currentUser?.id}
             value={selectedMemberName}
-            onChange={e => setSelectedMemberName(e.target.value)}
-            className="input text-sm"
-          >
-            <option value="">Select your name (optional)</option>
-            {members.map(m => (
-              <option key={m.id} value={m.name}>
-                {m.name}{m.id === currentUser?.id ? ' (You)' : ''}
-              </option>
-            ))}
-          </select>
+            onChange={setSelectedMemberName}
+            placeholder="Select your name (optional)"
+            disabled={parsing}
+          />
         </div>
 
         {/* Natural language input */}
@@ -97,6 +95,7 @@ export default function NaturalLanguageInput({ groupId, members, currentUser, on
             className="input min-h-[80px] resize-none"
             required
             maxLength={2000}
+            disabled={parsing}
           />
         </div>
 
@@ -111,8 +110,10 @@ export default function NaturalLanguageInput({ groupId, members, currentUser, on
                 key={i}
                 type="button"
                 onClick={() => setText(ex)}
+                disabled={parsing}
                 className="text-xs px-2.5 py-1 bg-violet-50 border border-violet-200
-                           text-violet-700 rounded-full hover:bg-violet-100 transition-colors font-medium"
+                           text-violet-700 rounded-full hover:bg-violet-100 transition-colors font-medium
+                           disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {ex}
               </button>
@@ -147,14 +148,14 @@ export default function NaturalLanguageInput({ groupId, members, currentUser, on
               <><Sparkles className="w-4 h-4" /> Parse with AI</>
             )}
           </button>
-          <button type="button" onClick={onCancel} className="btn-secondary">
+          <button type="button" onClick={onCancel} disabled={parsing} className="btn-secondary">
             Cancel
           </button>
         </div>
       </form>
 
       <p className="text-xs text-slate-400 mt-4 flex items-center gap-1.5">
-        AI will work for 30 seconds at max. You can also use manual entry if AI fails to parse your input.
+        AI parses your description and shows a preview — no expense is saved until you confirm.
       </p>
     </div>
   );
