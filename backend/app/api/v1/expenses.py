@@ -8,8 +8,8 @@ Routes:
   GET    /api/v1/groups/:id/expenses         — List expenses
   POST   /api/v1/groups/:id/expenses         — Create expense
   GET    /api/v1/groups/:id/expenses/:eid    — Get expense detail
-  PATCH  /api/v1/expenses/:eid               — Edit expense (creator only)
-  DELETE /api/v1/expenses/:eid               — Delete expense (creator only)
+  PATCH  /api/v1/expenses/:eid               — Edit expense (any member)
+  DELETE /api/v1/expenses/:eid               — Delete expense (any member)
 """
 
 import logging
@@ -243,7 +243,7 @@ async def update_expense(
     """
     Edit an existing expense.
 
-    Authorization: only the user who created the expense can edit it.
+    Authorization: any current group member can edit.
 
     When amount or participants change, shares are recalculated.
     Balance impact is always recomputed from the authoritative expense/settlement data.
@@ -256,17 +256,17 @@ async def update_expense(
     if not expense:
         raise HTTPException(status_code=404, detail="Expense not found")
 
-    # Authorization: only creator can edit
-    if expense["created_by"] != user_id:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only the person who created this expense can edit it.",
-        )
-
     # Get the group for member validation
     group = await db.groups.find_one({"_id": ObjectId(expense["group_id"])})
     if not group:
         raise HTTPException(status_code=404, detail="Group not found")
+
+    # Authorization: any current group member can edit
+    if user_id not in group.get("member_ids", []):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You must be a member of this group to edit expenses.",
+        )
 
     member_ids = group.get("member_ids", [])
 
@@ -350,7 +350,7 @@ async def delete_expense(
     """
     Delete an expense.
 
-    Authorization: only the creator can delete.
+    Authorization: any current group member can delete.
     """
     db = get_database()
     user_id = str(current_user["_id"])
@@ -360,13 +360,16 @@ async def delete_expense(
     if not expense:
         raise HTTPException(status_code=404, detail="Expense not found")
 
-    if expense["created_by"] != user_id:
+    group = await db.groups.find_one({"_id": ObjectId(expense["group_id"])})
+    if not group:
+        raise HTTPException(status_code=404, detail="Group not found")
+
+    # Authorization: any current group member can delete
+    if user_id not in group.get("member_ids", []):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only the person who created this expense can delete it.",
+            detail="You must be a member of this group to delete expenses.",
         )
-
-    group = await db.groups.find_one({"_id": ObjectId(expense["group_id"])})
 
     await db.expenses.delete_one({"_id": eid})
 

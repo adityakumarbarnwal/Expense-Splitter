@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { useParams, Link } from 'react-router-dom';
+import { useParams, Link, useLocation } from 'react-router-dom';
 import {
   Plus, Trash2, Sparkles, ChevronDown, ChevronUp, ChevronRight,
   Receipt, Pencil, Check, X
@@ -172,7 +172,7 @@ function ExpenseCard({ expense, members, currentUserId, onDelete, onEdit }) {
 
         <div className="flex items-center gap-1 flex-shrink-0">
           <span className="text-lg font-black text-slate-900">{formatCurrency(expense.amount)}</span>
-          {isCreator && !editing && (
+          {!editing && (
             <button onClick={() => { setEditing(true); setExpanded(true); }}
               className="p-1.5 text-slate-300 hover:text-brand-600 hover:bg-brand-50 rounded-lg transition-colors"
               title="Edit expense">
@@ -183,12 +183,11 @@ function ExpenseCard({ expense, members, currentUserId, onDelete, onEdit }) {
             className="p-1.5 text-slate-300 hover:text-slate-600 hover:bg-slate-100 rounded-lg transition-colors">
             {expanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
           </button>
-          {isCreator && (
-            <button onClick={() => onDelete(expense)}
-              className="p-1.5 text-slate-200 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors">
-              <Trash2 className="w-4 h-4" />
-            </button>
-          )}
+          <button onClick={() => onDelete(expense)}
+            className="p-1.5 text-slate-200 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors"
+            title="Delete expense">
+            <Trash2 className="w-4 h-4" />
+          </button>
         </div>
       </div>
 
@@ -235,6 +234,7 @@ function ExpenseCard({ expense, members, currentUserId, onDelete, onEdit }) {
 export default function ExpensesPage() {
   const { groupId } = useParams();
   const { user } = useAuth();
+  const location = useLocation();
   const [group, setGroup] = useState(null);
   const [expenses, setExpenses] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -269,7 +269,7 @@ export default function ExpensesPage() {
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
-  const openManualForm = () => {
+  const openManualForm = useCallback(() => {
     const currentMember = group?.members?.find(m => m.id === user?.id);
     setFormData({
       description: '', amount: '',
@@ -280,7 +280,19 @@ export default function ExpensesPage() {
     setShowManualForm(true);
     setShowAIInput(false);
     setAIResult(null);
-  };
+  }, [group, user?.id]);
+
+  useEffect(() => {
+    if (location.state?.openManual) {
+      if (group) {
+        openManualForm();
+        window.history.replaceState({}, '');
+      }
+    } else if (location.state?.openAI) {
+      setShowAIInput(true);
+      window.history.replaceState({}, '');
+    }
+  }, [group, location.state, openManualForm]);
 
   const handleParticipantToggle = (memberId) => {
     setFormData(prev => {

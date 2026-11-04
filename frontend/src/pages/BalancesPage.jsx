@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import {
   CheckCircle, AlertCircle, ArrowRight, Plus, ChevronRight,
-  TrendingUp, TrendingDown, Minus, Users, History
+  TrendingUp, TrendingDown, Minus, Users, History, Pencil
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { groupsApi, balancesApi } from '../services/api';
@@ -27,6 +27,82 @@ function getAvatarColor(name) {
   return avatarColors[(name || 'A').charCodeAt(0) % avatarColors.length];
 }
 
+function SettlementEditForm({ settlement, members, onSave, onCancel, saving }) {
+  const [payerId, setPayerId] = useState(
+    settlement.payer_id || members.find(m => m.name === settlement.payer_name)?.id || ''
+  );
+  const [receiverId, setReceiverId] = useState(
+    settlement.receiver_id || members.find(m => m.name === settlement.receiver_name)?.id || ''
+  );
+  const [amount, setAmount] = useState(String(settlement.amount ?? ''));
+  const [note, setNote] = useState(settlement.note || '');
+
+  const handleSubmit = (e) => {
+    e.preventDefault();
+    if (!payerId || !receiverId || !amount) {
+      toast.error('Please fill in all required fields');
+      return;
+    }
+    if (payerId === receiverId) {
+      toast.error('Payer and receiver must be different');
+      return;
+    }
+    if (parseFloat(amount) <= 0) {
+      toast.error('Amount must be greater than 0');
+      return;
+    }
+    onSave(settlement.id, {
+      payer_id: payerId,
+      receiver_id: receiverId,
+      amount: parseFloat(amount),
+      note: note.trim() || null,
+    });
+  };
+
+  return (
+    <form onSubmit={handleSubmit} className="p-4 rounded-xl bg-white/70 border border-brand-200/60 shadow-sm space-y-3">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+        <div>
+          <label className="label text-xs">Who paid *</label>
+          <select value={payerId} onChange={e => setPayerId(e.target.value)} className="input text-sm" required>
+            <option value="">Select payer</option>
+            {members.map(m => (
+              <option key={m.id} value={m.id}>{m.name}</option>
+            ))}
+          </select>
+        </div>
+        <div>
+          <label className="label text-xs">Paid to *</label>
+          <select value={receiverId} onChange={e => setReceiverId(e.target.value)} className="input text-sm" required>
+            <option value="">Select receiver</option>
+            {members.map(m => (
+              <option key={m.id} value={m.id}>{m.name}</option>
+            ))}
+          </select>
+        </div>
+        <div>
+          <label className="label text-xs">Amount (₹) *</label>
+          <input type="number" value={amount} onChange={e => setAmount(e.target.value)}
+            className="input text-sm" min="0.01" step="0.01" required />
+        </div>
+      </div>
+      <div>
+        <label className="label text-xs">Note (optional)</label>
+        <input type="text" value={note} onChange={e => setNote(e.target.value)}
+          placeholder="e.g. UPI transfer" className="input text-sm" />
+      </div>
+      <div className="flex gap-2 pt-1">
+        <button type="submit" disabled={saving} className="btn-primary text-xs py-1.5 px-3">
+          {saving ? 'Saving...' : 'Save'}
+        </button>
+        <button type="button" onClick={onCancel} className="btn-secondary text-xs py-1.5 px-3">
+          Cancel
+        </button>
+      </div>
+    </form>
+  );
+}
+
 export default function BalancesPage() {
   const { groupId } = useParams();
   const { user } = useAuth();
@@ -38,6 +114,22 @@ export default function BalancesPage() {
   const [showSettleForm, setShowSettleForm] = useState(false);
   const [settleForm, setSettleForm] = useState({ payer_id: '', receiver_id: '', amount: '', note: '' });
   const [submitting, setSubmitting] = useState(false);
+  const [editingSettlementId, setEditingSettlementId] = useState(null);
+  const [savingSettlement, setSavingSettlement] = useState(false);
+
+  const handleUpdateSettlement = async (settlementId, data) => {
+    setSavingSettlement(true);
+    try {
+      await balancesApi.updateSettlement(settlementId, data);
+      toast.success('Settlement updated');
+      setEditingSettlementId(null);
+      fetchData();
+    } catch (err) {
+      toast.error(err.message || 'Failed to update settlement');
+    } finally {
+      setSavingSettlement(false);
+    }
+  };
 
   const fetchData = useCallback(async () => {
     try {
@@ -381,21 +473,41 @@ export default function BalancesPage() {
         ) : (
           <div className="space-y-2">
             {settlements.map(s => (
-              <div key={s.id}
-                className="flex items-center justify-between py-3 px-3 rounded-xl
-                           hover:bg-slate-50/50 transition-colors">
-                <div>
-                  <div className="flex items-center gap-2 text-sm">
-                    <span className="font-semibold text-slate-900">{s.payer_name}</span>
-                    <ArrowRight className="w-3.5 h-3.5 text-slate-300" />
-                    <span className="font-semibold text-slate-900">{s.receiver_name}</span>
+              editingSettlementId === s.id ? (
+                <SettlementEditForm
+                  key={s.id}
+                  settlement={s}
+                  members={members}
+                  onSave={handleUpdateSettlement}
+                  onCancel={() => setEditingSettlementId(null)}
+                  saving={savingSettlement}
+                />
+              ) : (
+                <div key={s.id}
+                  className="flex items-center justify-between py-3 px-3 rounded-xl
+                             hover:bg-slate-50/50 transition-colors">
+                  <div>
+                    <div className="flex items-center gap-2 text-sm">
+                      <span className="font-semibold text-slate-900">{s.payer_name}</span>
+                      <ArrowRight className="w-3.5 h-3.5 text-slate-300" />
+                      <span className="font-semibold text-slate-900">{s.receiver_name}</span>
+                    </div>
+                    <p className="text-xs text-slate-400 mt-0.5">
+                      {formatDate(s.created_at)}{s.note ? ` · ${s.note}` : ''}
+                    </p>
                   </div>
-                  <p className="text-xs text-slate-400 mt-0.5">
-                    {formatDate(s.created_at)}{s.note ? ` · ${s.note}` : ''}
-                  </p>
+                  <div className="flex items-center gap-3">
+                    <span className="font-black text-slate-700">{formatCurrency(s.amount)}</span>
+                    <button
+                      onClick={() => setEditingSettlementId(s.id)}
+                      className="p-1.5 text-slate-400 hover:text-brand-600 hover:bg-brand-50 rounded-lg transition-colors"
+                      title="Edit settlement"
+                    >
+                      <Pencil className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
                 </div>
-                <span className="font-black text-slate-700">{formatCurrency(s.amount)}</span>
-              </div>
+              )
             ))}
           </div>
         )}

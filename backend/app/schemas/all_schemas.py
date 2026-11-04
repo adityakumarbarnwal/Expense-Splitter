@@ -234,6 +234,8 @@ class SettlementResponse(BaseModel):
     amount: float
     note: Optional[str] = None
     created_at: datetime
+    updated_at: Optional[datetime] = None
+
 
 
 # ──────────────────────────────────────────────
@@ -293,3 +295,42 @@ class DashboardResponse(BaseModel):
     net_balance: float
     recent_expenses: list[ExpenseResponse]
     groups: list[GroupListItem]
+
+
+# ──────────────────────────────────────────────
+# Password Reset / OTP Schemas
+# ──────────────────────────────────────────────
+
+class ForgotPasswordRequest(BaseModel):
+    email: EmailStr
+
+
+class VerifyOTPRequest(BaseModel):
+    email: EmailStr
+    otp: str = Field(..., min_length=6, max_length=6)
+
+
+class VerifyOTPResponse(BaseModel):
+    reset_token: str
+    message: str
+
+
+class ResetPasswordRequest(BaseModel):
+    reset_token: str
+    new_password: str = Field(..., min_length=8, max_length=128)
+
+
+class MessageResponse(BaseModel):
+    message: str
+
+
+# ──────────────────────────────────────────────
+# Settlement Update Schema
+# ──────────────────────────────────────────────
+
+class UpdateSettlementRequest(BaseModel):
+    payer_id: Optional[str] = None
+    receiver_id: Optional[str] = None
+    amount: Optional[float] = Field(None, gt=0, le=10_000_000)
+    note: Optional[str] = Field(None, max_length=500)
+

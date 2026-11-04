@@ -329,13 +329,15 @@ export default function GroupInsightsPage() {
               <div className="mt-4 pt-4 border-t border-slate-100/60">
                 <div className="space-y-2">
                   {insights.member_spending.map(m => (
-                    <div key={m.user_id} className="flex items-center justify-between text-sm py-1">
-                      <span className="font-semibold text-slate-800">{m.name}</span>
-                      <div className="flex gap-6 text-xs text-slate-500">
+                    <div key={m.user_id} className="py-1.5 border-b border-slate-100/50 last:border-0">
+                      <p className="font-semibold text-slate-800 text-sm mb-0.5">{m.name}</p>
+                      <div className="flex flex-wrap gap-3 text-xs text-slate-500">
                         <span>Paid <span className="font-bold text-slate-700">{formatCurrency(m.paid)}</span></span>
                         <span>Share <span className="font-bold text-slate-700">{formatCurrency(m.share)}</span></span>
-                        <span className={`font-bold ${m.net > 0.005 ? 'text-emerald-600' : m.net < -0.005 ? 'text-red-500' : 'text-slate-400'}`}>
-                          {m.net > 0.005 ? `+${formatCurrency(m.net)}` : m.net < -0.005 ? `-${formatCurrency(m.net)}` : '✓ Settled'}
+                        <span className={`font-bold ${
+                          m.net > 0.005 ? 'text-emerald-600' : m.net < -0.005 ? 'text-red-500' : 'text-slate-400'
+                        }`}>
+                          Net: {m.net > 0.005 ? `+${formatCurrency(m.net)}` : m.net < -0.005 ? `-${formatCurrency(m.net)}` : '✓ Settled'}
                         </span>
                       </div>
                     </div>

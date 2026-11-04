@@ -11,6 +11,7 @@ import {
 import { dashboardApi, balancesApi } from '../services/api';
 import { LoadingSpinner, ErrorMessage, NetPositionBadge, StatWidget, ChartEmpty } from '../components/common/UI';
 import { useAuth } from '../contexts/AuthContext';
+import AddExpenseFlow from '../components/expense/AddExpenseFlow';
 
 function formatCurrency(amount) {
   return `₹${Math.abs(Number(amount)).toFixed(2)}`;
@@ -46,6 +47,7 @@ export default function DashboardPage() {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [showAddExpense, setShowAddExpense] = useState(false);
 
   const fetchDashboard = useCallback(async () => {
     try {
@@ -159,16 +161,24 @@ export default function DashboardPage() {
           <Link to="/groups" className="btn-primary flex items-center gap-2">
             <Plus className="w-4 h-4" /> New Group
           </Link>
-          <Link
-            to="/groups"
+          <button
+            onClick={() => setShowAddExpense((s) => !s)}
             className="btn-secondary flex items-center gap-2"
           >
-            <Sparkles className="w-4 h-4 text-violet-500" /> AI Expense
-          </Link>
+            <Plus className="w-4 h-4" /> Add Expense
+          </button>
           <Link to="/groups" className="btn-secondary flex items-center gap-2">
             <BarChart2 className="w-4 h-4" /> View Balances
           </Link>
         </div>
+        {showAddExpense && (
+          <div className="mt-4">
+            <AddExpenseFlow
+              groups={data?.groups || []}
+              onClose={() => setShowAddExpense(false)}
+            />
+          </div>
+        )}
       </div>
 
       {/* ── Charts row ── */}
@@ -335,13 +345,13 @@ export default function DashboardPage() {
           <Zap className="w-6 h-6 text-white" />
         </div>
         <div className="flex-1 min-w-0">
-          <p className="font-bold text-slate-900">AI-Powered Expense Entry</p>
+          <p className="font-bold text-slate-900">AI-Based Expense Entry & Insights</p>
           <p className="text-sm text-slate-500 mt-0.5">
             Type naturally — "Dinner with Rahul ₹800 split equally" — and SplitIt does the rest.
           </p>
         </div>
         <Link to="/groups" className="btn-primary flex-shrink-0 flex items-center gap-2">
-          <Sparkles className="w-4 h-4" /> Try AI Entry
+          <Sparkles className="w-4 h-4" /> Try AI Insights
         </Link>
       </div>
     </div>

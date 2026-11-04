@@ -154,8 +154,7 @@ export default function NaturalLanguageInput({ groupId, members, currentUser, on
       </form>
 
       <p className="text-xs text-slate-400 mt-4 flex items-center gap-1.5">
-        <span>🔒</span>
-        AI interprets your text — you'll review before anything is saved.
+        AI will work for 30 seconds at max. You can also use manual entry if AI fails to parse your input.
       </p>
     </div>
   );

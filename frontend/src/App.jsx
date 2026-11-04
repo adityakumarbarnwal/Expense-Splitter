@@ -8,6 +8,7 @@ import ProtectedRoute from './components/common/ProtectedRoute';
 // Auth pages (unauthenticated only)
 import LoginPage from './pages/LoginPage';
 import RegisterPage from './pages/RegisterPage';
+import ForgotPasswordPage from './pages/ForgotPasswordPage';
 
 // Authenticated pages
 import DashboardPage from './pages/DashboardPage';
@@ -49,6 +50,7 @@ function App() {
           {/* Auth pages — no layout, no protection */}
           <Route path="/login" element={<LoginPage />} />
           <Route path="/register" element={<RegisterPage />} />
+          <Route path="/forgot-password" element={<ForgotPasswordPage />} />
 
           {/* Protected authenticated routes — all wrapped in Layout */}
           <Route

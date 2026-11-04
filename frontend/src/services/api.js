@@ -43,6 +43,9 @@ export const authApi = {
   login: (data) => apiClient.post('/auth/login', data).then((r) => r.data),
   logout: () => apiClient.post('/auth/logout').then((r) => r.data),
   me: () => apiClient.get('/auth/me').then((r) => r.data),
+  forgotPassword: (data) => apiClient.post('/auth/forgot-password', data).then((r) => r.data),
+  verifyOTP: (data) => apiClient.post('/auth/verify-otp', data).then((r) => r.data),
+  resetPassword: (data) => apiClient.post('/auth/reset-password', data).then((r) => r.data),
 };
 
 // ===========================
@@ -91,6 +94,8 @@ export const balancesApi = {
   listSettlements: (groupId) => apiClient.get(`/groups/${groupId}/settlements`).then((r) => r.data),
   recordSettlement: (groupId, data) =>
     apiClient.post(`/groups/${groupId}/settlements`, data).then((r) => r.data),
+  updateSettlement: (settlementId, data) =>
+    apiClient.patch(`/settlements/${settlementId}`, data).then((r) => r.data),
 };
 
 // ===========================

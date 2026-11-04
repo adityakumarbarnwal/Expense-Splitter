@@ -152,6 +152,7 @@ class SettlementDocument(BaseModel):
     note: str | None = None
     created_by: str
     created_at: datetime = Field(default_factory=utcnow)
+    updated_at: datetime | None = None
 
     def to_dict(self) -> dict:
         d = self.model_dump(exclude={"id"}, by_alias=False)

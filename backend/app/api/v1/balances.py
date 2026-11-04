@@ -2,12 +2,14 @@
 Balances and Settlements API routes — MongoDB backend.
 
 Routes:
-  GET  /api/v1/groups/:id/balances             — Get net balances + suggestions
-  GET  /api/v1/groups/:id/settlements          — List settlements
-  POST /api/v1/groups/:id/settlements          — Record a settlement
+  GET   /api/v1/groups/:id/balances             — Get net balances + suggestions
+  GET   /api/v1/groups/:id/settlements          — List settlements
+  POST  /api/v1/groups/:id/settlements          — Record a settlement
+  PATCH /api/v1/settlements/:id                 — Edit a settlement (any member)
 """
 
 import logging
+from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, status
 from bson import ObjectId
 
@@ -20,6 +22,7 @@ from app.schemas.all_schemas import (
     MemberBalanceResponse,
     SettlementResponse,
     SettlementSuggestion,
+    UpdateSettlementRequest,
 )
 from app.services.balance_engine import calculate_group_balances, generate_settlement_suggestions
 from app.services.notification_service import notify_group_members
@@ -126,6 +129,7 @@ async def list_settlements(
             amount=s["amount"],
             note=s.get("note"),
             created_at=s["created_at"],
+            updated_at=s.get("updated_at"),
         )
         for s in settlements
     ]
@@ -191,4 +195,109 @@ async def record_settlement(
         amount=settlement["amount"],
         note=settlement.get("note"),
         created_at=settlement["created_at"],
+        updated_at=settlement.get("updated_at"),
     )
+
+
+@router.patch("/settlements/{settlement_id}", response_model=SettlementResponse)
+async def update_settlement(
+    settlement_id: str,
+    data: UpdateSettlementRequest,
+    current_user=Depends(get_current_user),
+):
+    """
+    Update an existing settlement.
+
+    Authorization: any current group member can update a settlement.
+    """
+    db = get_database()
+    user_id = str(current_user["_id"])
+
+    # 2. Validate settlement_id as ObjectId
+    sid = _require_valid_oid(settlement_id, "settlement ID")
+
+    # 3. Fetch settlement
+    settlement = await db.settlements.find_one({"_id": sid})
+    if not settlement:
+        raise HTTPException(status_code=404, detail="Settlement not found")
+
+    # 4. Fetch group by settlement["group_id"]
+    group = await _get_group_or_404(db, settlement["group_id"])
+
+    # 5. Check user is a group member — raise 403 if not
+    await _require_member(group, user_id)
+
+    member_ids = group.get("member_ids", [])
+
+    # Effective payer and receiver
+    effective_payer_id = data.payer_id if data.payer_id is not None else settlement["payer_id"]
+    effective_receiver_id = data.receiver_id if data.receiver_id is not None else settlement["receiver_id"]
+
+    # 6. Validate any new payer_id or receiver_id are group members
+    if data.payer_id is not None and data.payer_id not in member_ids:
+        raise HTTPException(status_code=400, detail="Payer is not a group member.")
+    if data.receiver_id is not None and data.receiver_id not in member_ids:
+        raise HTTPException(status_code=400, detail="Receiver is not a group member.")
+
+    # 7. Prevent payer_id == receiver_id
+    if effective_payer_id == effective_receiver_id:
+        raise HTTPException(status_code=400, detail="Payer and receiver must be different.")
+
+    # 8. Lookup new names from db.users if ids change
+    # 9. Build update_fields with only changed fields + updated_at: datetime.now(timezone.utc)
+    now = datetime.now(timezone.utc)
+    update_fields: dict = {"updated_at": now}
+
+    if data.payer_id is not None:
+        payer_user = await db.users.find_one({"_id": ObjectId(data.payer_id)}, {"name": 1}) if ObjectId.is_valid(data.payer_id) else None
+        if not payer_user:
+            raise HTTPException(status_code=404, detail="Payer user not found.")
+        update_fields["payer_id"] = data.payer_id
+        update_fields["payer_name"] = payer_user["name"]
+
+    if data.receiver_id is not None:
+        receiver_user = await db.users.find_one({"_id": ObjectId(data.receiver_id)}, {"name": 1}) if ObjectId.is_valid(data.receiver_id) else None
+        if not receiver_user:
+            raise HTTPException(status_code=404, detail="Receiver user not found.")
+        update_fields["receiver_id"] = data.receiver_id
+        update_fields["receiver_name"] = receiver_user["name"]
+
+    if data.amount is not None:
+        update_fields["amount"] = data.amount
+
+    if data.note is not None:
+        update_fields["note"] = data.note
+
+    # 10. Apply update
+    await db.settlements.update_one({"_id": sid}, {"$set": update_fields})
+
+    # 11. Fetch updated settlement
+    updated_settlement = await db.settlements.find_one({"_id": sid})
+
+    # 12. Send ONE notification to group:
+    new_amount = updated_settlement["amount"]
+    await notify_group_members(
+        db=db,
+        group=group,
+        type="settlement_updated",
+        message=f"{current_user['name']} updated a settlement of ₹{new_amount:,.2f} in \"{group['name']}\".",
+        related_entity_id=settlement["group_id"],
+        related_entity_type="group",
+    )
+
+    logger.info("Settlement %s updated by user %s", settlement_id, user_id)
+
+    # 13. Return SettlementResponse
+    return SettlementResponse(
+        id=str(updated_settlement["_id"]),
+        group_id=updated_settlement["group_id"],
+        payer_id=updated_settlement["payer_id"],
+        payer_name=updated_settlement["payer_name"],
+        receiver_id=updated_settlement["receiver_id"],
+        receiver_name=updated_settlement["receiver_name"],
+        amount=updated_settlement["amount"],
+        note=updated_settlement.get("note"),
+        created_at=updated_settlement["created_at"],
+        updated_at=updated_settlement.get("updated_at"),
+    )
+

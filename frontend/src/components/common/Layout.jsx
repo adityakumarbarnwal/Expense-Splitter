@@ -68,11 +68,11 @@ export default function Layout() {
             {user ? (
               <div className="flex items-center gap-2">
                 {/* AI badge */}
-                <div className="hidden md:flex items-center gap-1 px-2 py-1 rounded-full
+                {/* <div className="hidden md:flex items-center gap-1 px-2 py-1 rounded-full
                                 bg-violet-100/70 border border-violet-200/50">
                   <Zap className="w-3 h-3 text-violet-600" />
                   <span className="text-[10px] font-bold text-violet-700 tracking-wide">AI</span>
-                </div>
+                </div> */}
 
                 <NotificationBell />
 
