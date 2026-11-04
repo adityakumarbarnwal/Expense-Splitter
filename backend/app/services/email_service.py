@@ -3,8 +3,12 @@ Email service using aiosmtplib.
 
 Sends emails for:
 - Group membership invitations
+- Password reset OTPs
 
-Gracefully handles failures — email failure does NOT roll back database state.
+Gracefully handles failures — email failure does NOT roll back database state,
+except for OTP emails where the caller cleans up on failure.
+
+SMTP timeout: 15 seconds per connection — prevents indefinite blocking.
 """
 import logging
 import aiosmtplib
@@ -15,6 +19,9 @@ from app.core.config import get_settings
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
+
+# Bounded SMTP timeout — prevents indefinite blocking on slow/dead SMTP servers
+_SMTP_TIMEOUT_SECONDS = 15
 
 
 async def send_group_invitation_email(
@@ -36,26 +43,26 @@ async def send_group_invitation_email(
         )
         return True  # Pretend success in dev
 
-    subject = f"You've been added to '{group_name}' on Group Expense Splitter"
+    subject = f"You've been added to '{group_name}' on SplitIt"
     app_link = f"{settings.frontend_url}/groups"
 
     html_body = f"""
     <html><body style="font-family: Arial, sans-serif; max-width: 600px; margin: auto; padding: 24px;">
-      <h2 style="color: #2563eb;">You've been added to a group!</h2>
+      <h2 style="color: #6366f1;">You've been added to a group!</h2>
       <p>Hi <strong>{to_name}</strong>,</p>
       <p><strong>{inviter_name}</strong> has added you to the group
-         <strong>"{group_name}"</strong> on Group Expense Splitter.</p>
+         <strong>"{group_name}"</strong> on SplitIt.</p>
       <p>You can now view shared expenses, balances, and settlements for this group.</p>
       <p style="margin-top: 24px;">
         <a href="{app_link}"
-           style="background: #2563eb; color: white; padding: 12px 24px;
+           style="background: #6366f1; color: white; padding: 12px 24px;
                   border-radius: 6px; text-decoration: none; font-weight: bold;">
           View Group
         </a>
       </p>
       <hr style="margin-top: 32px; border: none; border-top: 1px solid #e5e7eb;" />
       <p style="color: #9ca3af; font-size: 12px;">
-        Group Expense Splitter — DSC4141 Academic Project
+        SplitIt — Group Expense Splitter
       </p>
     </body></html>
     """
@@ -74,6 +81,7 @@ async def send_group_invitation_email(
             username=settings.mail_username or None,
             password=settings.mail_password or None,
             start_tls=settings.mail_starttls,
+            timeout=_SMTP_TIMEOUT_SECONDS,
         )
         logger.info("Group invitation email sent to %s", to_email)
         return True
@@ -92,20 +100,26 @@ async def send_password_reset_otp_email(
 
     Returns True on success, False on failure.
     Failure is logged but does NOT raise — caller handles it gracefully.
+
+    IMPORTANT: When mail_enabled=False this function returns False (not True),
+    so the caller (forgot_password endpoint) will NOT leave a usable OTP in
+    the database. The endpoint already guards against calling this function
+    when mail is disabled, but this is a defence-in-depth measure.
     """
     if not settings.mail_enabled:
-        logger.info(
-            "Email disabled. Would have sent OTP to %s",
+        logger.warning(
+            "MAIL_ENABLED=False — OTP email NOT sent to %s. "
+            "Configure SMTP and set MAIL_ENABLED=true to enable password reset.",
             to_email,
         )
-        return True  # Pretend success in dev
+        return False  # Caller will delete the OTP document on False
 
-    subject = "Your Password Reset OTP — Group Expense Splitter"
+    subject = "Your Password Reset OTP — SplitIt"
     html_body = f"""
     <html><body style="font-family: Arial, sans-serif; max-width: 600px; margin: auto; padding: 24px;">
-      <h2 style="color: #2563eb;">Password Reset Request</h2>
+      <h2 style="color: #6366f1;">Password Reset Request</h2>
       <p>Hi <strong>{to_name}</strong>,</p>
-      <p>We received a request to reset your password for Group Expense Splitter.</p>
+      <p>We received a request to reset your password for SplitIt.</p>
       <p>Your 6-digit verification code is:</p>
       <div style="background: #f3f4f6; border-radius: 8px; padding: 16px; text-align: center; margin: 24px 0;">
         <span style="font-size: 32px; font-weight: bold; letter-spacing: 6px; color: #1f2937;">{otp}</span>
@@ -113,7 +127,7 @@ async def send_password_reset_otp_email(
       <p>This code will expire in <strong>10 minutes</strong>. If you did not request this code, you can safely ignore this email.</p>
       <hr style="margin-top: 32px; border: none; border-top: 1px solid #e5e7eb;" />
       <p style="color: #9ca3af; font-size: 12px;">
-        Group Expense Splitter — DSC4141 Academic Project
+        SplitIt — Group Expense Splitter
       </p>
     </body></html>
     """
@@ -132,10 +146,10 @@ async def send_password_reset_otp_email(
             username=settings.mail_username or None,
             password=settings.mail_password or None,
             start_tls=settings.mail_starttls,
+            timeout=_SMTP_TIMEOUT_SECONDS,
         )
         logger.info("Password reset OTP email sent to %s", to_email)
         return True
     except Exception as e:
         logger.error("Failed to send password reset OTP email to %s: %s", to_email, e)
         return False
-

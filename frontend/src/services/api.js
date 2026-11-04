@@ -16,10 +16,19 @@ const apiClient = axios.create({
     'Content-Type': 'application/json',
   },
   withCredentials: true, // Send httpOnly auth cookie on every request
-  timeout: 30000, // 30s (AI endpoints may be slower)
+  timeout: 30000, // 30s global default (AI endpoints may be slower)
 });
 
-// Response interceptor: normalize errors
+/**
+ * Response interceptor: normalize errors while preserving HTTP status.
+ *
+ * We re-throw an Error with a human-readable message BUT also attach
+ * `error.status` so callers (e.g. AuthContext) can distinguish a genuine
+ * 401 Unauthorized from a network timeout or server error.
+ *
+ * This prevents transient backend failures from being misidentified as
+ * authentication failures and triggering spurious logouts.
+ */
 apiClient.interceptors.response.use(
   (response) => response,
   (error) => {
@@ -28,7 +37,13 @@ apiClient.interceptors.response.use(
       error.response?.data?.message ||
       error.message ||
       'An unexpected error occurred';
-    return Promise.reject(new Error(message));
+
+    const normalizedError = new Error(message);
+    // Preserve the HTTP status so callers can inspect it
+    normalizedError.status = error.response?.status ?? null;
+    // Preserve the full response for callers that need it
+    normalizedError.response = error.response ?? null;
+    return Promise.reject(normalizedError);
   }
 );
 

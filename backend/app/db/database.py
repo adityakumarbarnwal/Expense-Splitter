@@ -6,6 +6,12 @@ Provides:
 - Database instance
 - Startup/shutdown lifecycle management
 - Index creation
+
+Performance notes:
+- Client is initialized ONCE at startup via connect_db() / lifespan.
+- serverSelectionTimeoutMS reduced to 10s to surface Atlas connectivity
+  problems quickly rather than making every request wait 20+ seconds.
+- socketTimeoutMS guards individual operations against hung connections.
 """
 
 import logging
@@ -51,7 +57,14 @@ async def connect_db() -> None:
 
     _client = AsyncIOMotorClient(
         settings.mongodb_uri,
-        serverSelectionTimeoutMS=20_000,
+        # 10s server-selection timeout: surfaces Atlas connectivity problems
+        # quickly instead of silently hanging every request for 20+ seconds.
+        serverSelectionTimeoutMS=10_000,
+        # Individual socket connect and I/O timeouts
+        connectTimeoutMS=10_000,
+        socketTimeoutMS=15_000,
+        # Small pool — adequate for a dev/academic app
+        maxPoolSize=10,
     )
     _db = _client[settings.mongodb_db_name]
 

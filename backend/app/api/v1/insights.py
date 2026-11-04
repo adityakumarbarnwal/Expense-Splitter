@@ -5,6 +5,7 @@ GET  /api/v1/groups/{group_id}/insights   — Group-level analytics
 POST /api/v1/groups/{group_id}/insights/ai — AI interpretation of group stats
 """
 
+import asyncio
 import json
 import logging
 from collections import defaultdict
@@ -285,7 +286,16 @@ Rules:
 - Do NOT invent numbers — only use the stats provided
 - If group has no expenses, say so in summary"""
 
-        response = model.generate_content(prompt)
+        # Wrap the synchronous Gemini SDK call so it does not block the event loop.
+        # The 20-second timeout surfaces slow API responses rather than hanging the request.
+        import concurrent.futures
+        loop = asyncio.get_event_loop()
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+            gen_future = loop.run_in_executor(pool, model.generate_content, prompt)
+            try:
+                response = await asyncio.wait_for(gen_future, timeout=20.0)
+            except asyncio.TimeoutError:
+                raise Exception('Gemini API timed out after 20 seconds')
         raw = response.text.strip()
 
         # Strip markdown code fences if present
