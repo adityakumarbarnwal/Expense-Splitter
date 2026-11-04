@@ -6,6 +6,7 @@ Provides:
 - Database instance
 - Startup/shutdown lifecycle management
 - Index creation
+- retry_db_read() helper for resilient read operations on Atlas M0
 
 Connection reliability notes:
 - Atlas M0 free tier drops idle connections after ~60 seconds.
@@ -14,15 +15,25 @@ Connection reliability notes:
 - serverSelectionTimeoutMS=10s surfaces Atlas unreachability quickly.
 - socketTimeoutMS=20s gives active operations enough time to complete on
   the Atlas free tier (which is slower than paid tiers).
+- retryReads=True / retryWrites=True instruct the driver to retry once on a
+  stale connection. retry_db_read() adds a second application-level retry
+  with a short delay for endpoints where a single driver retry is not enough.
 - The client is initialized ONCE at startup; get_database() returns the
   singleton. Never call AsyncIOMotorClient() per-request.
 """
 
+import asyncio
 import logging
 import re
 from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorDatabase
 from pymongo import IndexModel, ASCENDING, DESCENDING
-from pymongo.errors import ServerSelectionTimeoutError, ConfigurationError
+from pymongo.errors import (
+    ServerSelectionTimeoutError,
+    ConfigurationError,
+    NetworkTimeout,
+    ConnectionFailure,
+    PyMongoError,
+)
 from app.core.config import get_settings
 
 logger = logging.getLogger(__name__)
@@ -49,6 +60,49 @@ def get_database() -> AsyncIOMotorDatabase:
     if _db is None:
         raise RuntimeError("Database not initialized. Call connect_db() first.")
     return _db
+
+
+async def retry_db_read(coro_factory, max_attempts: int = 3, delay: float = 0.5):
+    """
+    Retry an idempotent DB read operation on NetworkTimeout / ConnectionFailure.
+
+    Atlas M0 aggressively recycles idle TCP connections after ~60 seconds.
+    Even with retryReads=True in the Motor driver (which retries once internally),
+    a stale connection can still surface a NetworkTimeout on the first attempt
+    before the driver's retry kicks in.  This helper adds up to two more
+    application-level retries with a short back-off so that transient Atlas
+    connection recycling never fails a user-facing request.
+
+    Args:
+        coro_factory: A zero-argument callable that returns a *fresh* coroutine
+                      each time it is called (use a lambda, not a pre-created coro).
+        max_attempts:  Total attempts before re-raising the last exception (default 3).
+        delay:         Base seconds to wait between attempts (default 0.5 s).
+                       Actual wait is delay * attempt_number (linear back-off).
+
+    Usage:
+        doc = await retry_db_read(
+            lambda: db.my_collection.find_one({"key": value})
+        )
+
+    Only use for truly idempotent reads.  Do NOT use for writes or upserts.
+    """
+    last_exc: Exception | None = None
+    for attempt in range(max_attempts):
+        try:
+            return await coro_factory()
+        except (NetworkTimeout, ConnectionFailure) as exc:
+            last_exc = exc
+            logger.warning(
+                "DB read attempt %d/%d failed (%s): %s",
+                attempt + 1,
+                max_attempts,
+                type(exc).__name__,
+                exc,
+            )
+            if attempt < max_attempts - 1:
+                await asyncio.sleep(delay * (attempt + 1))  # 0.5 s, 1.0 s, …
+    raise last_exc  # type: ignore[misc]
 
 
 async def connect_db() -> None:
@@ -175,4 +229,36 @@ async def _create_indexes(db: AsyncIOMotorDatabase) -> None:
     await db.notifications.create_indexes([
         IndexModel([("recipient_id", ASCENDING), ("read", ASCENDING), ("created_at", DESCENDING)], name="idx_notifications_recipient"),
         IndexModel([("created_at", DESCENDING)], name="idx_notifications_created_at"),
+    ])
+
+    # Password reset OTPs: compound index for the two read patterns used in auth.py
+    #   - forgot-password rate-limit:  {email, created_at}
+    #   - verify-otp lookup:           {email, used}
+    #   - reset-password lookup:       {email, used, reset_done}
+    # A single (email ASC, used ASC) index covers all three; created_at DESC for
+    # the rate-limit window query.
+    # TTL index on expires_at auto-deletes expired OTP docs from Atlas (keeps the
+    # collection small and avoids phantom OTPs piling up).
+    await db.password_reset_otps.create_indexes([
+        IndexModel(
+            [("email", ASCENDING), ("used", ASCENDING)],
+            name="idx_otp_email_used",
+        ),
+        IndexModel(
+            [("email", ASCENDING), ("created_at", DESCENDING)],
+            name="idx_otp_email_created",
+        ),
+        IndexModel(
+            [("expires_at", ASCENDING)],
+            name="idx_otp_ttl",
+            expireAfterSeconds=0,  # Atlas auto-deletes when expires_at is reached
+        ),
+    ])
+
+    # Password reset audit: rate-limit query {email, created_at}
+    await db.password_reset_audit.create_indexes([
+        IndexModel(
+            [("email", ASCENDING), ("created_at", DESCENDING)],
+            name="idx_audit_email_date",
+        ),
     ])

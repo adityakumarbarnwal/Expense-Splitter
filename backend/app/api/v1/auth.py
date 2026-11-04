@@ -27,7 +27,7 @@ from app.core.auth import (
     verify_password,
 )
 from app.core.config import get_settings
-from app.db.database import get_database
+from app.db.database import get_database, retry_db_read
 from app.models.documents import UserDocument
 from app.schemas.all_schemas import (
     AuthResponse,
@@ -97,7 +97,9 @@ async def register(data: RegisterRequest, response: Response):
     # Check for duplicate email — normalize to lowercase consistently
     email_normalized = data.email.lower().strip()
     try:
-        existing = await db.users.find_one({"email": email_normalized})
+        existing = await retry_db_read(
+            lambda: db.users.find_one({"email": email_normalized})
+        )
     except PyMongoError as e:
         logger.error("DB error during duplicate-email check for %s: %s", email_normalized, e)
         raise HTTPException(
@@ -158,14 +160,17 @@ async def login(data: LoginRequest, response: Response):
     """
     Login with email and password.
 
-    - Finds user by email
+    - Finds user by email (with retry on stale Atlas connection)
     - Verifies password with bcrypt
     - Sets httpOnly auth cookie
     """
     db = get_database()
 
+    email_normalized = data.email.lower().strip()
     try:
-        user = await db.users.find_one({"email": data.email.lower().strip()})
+        user = await retry_db_read(
+            lambda: db.users.find_one({"email": email_normalized})
+        )
     except PyMongoError as e:
         logger.error("DB error during login for %s: %s", data.email, e)
         raise HTTPException(
@@ -230,9 +235,13 @@ async def forgot_password(data: ForgotPasswordRequest):
     email = data.email.lower().strip()
     generic_message = "If an account exists for this email, a password-reset OTP has been sent."
 
-    # Privacy: same response whether email is registered or not
+    # Privacy: same response whether email is registered or not.
+    # Uses retry_db_read because this is the first query after a potentially
+    # long idle period — the most likely place for a stale-connection timeout.
     try:
-        user = await db.users.find_one({"email": email})
+        user = await retry_db_read(
+            lambda: db.users.find_one({"email": email})
+        )
     except PyMongoError as e:
         logger.error("DB error during forgot-password lookup: %s", e)
         # Return generic message — don't reveal DB state to caller
@@ -349,7 +358,9 @@ async def verify_otp(data: VerifyOTPRequest):
     email = data.email.lower().strip()
 
     try:
-        otp_doc = await db.password_reset_otps.find_one({"email": email, "used": False})
+        otp_doc = await retry_db_read(
+            lambda: db.password_reset_otps.find_one({"email": email, "used": False})
+        )
     except PyMongoError as e:
         logger.error("DB error during OTP verification: %s", e)
         raise HTTPException(
@@ -434,6 +445,9 @@ async def reset_password(data: ResetPasswordRequest):
 
     - Validates JWT reset token and purpose claim
     - Verifies used=True OTP exists and reset_done is not True
+      (uses retry_db_read — this lookup is the most likely to hit a stale
+       Atlas connection after the OTP verification step, which may have been
+       the last DB activity)
     - Validates new password length >= 8
     - Hashes password with hash_password from app.core.auth
     - Updates user in MongoDB
@@ -467,12 +481,18 @@ async def reset_password(data: ResetPasswordRequest):
         )
     email = email.lower().strip()
 
+    # This lookup is the confirmed failure point — wrap with retry_db_read.
+    # The verify-otp step may have been the last DB activity; Atlas may have
+    # recycled the connection in the meantime (especially if the user took time
+    # to type their new password). The retry helper transparently recovers.
     try:
-        otp_doc = await db.password_reset_otps.find_one({
-            "email": email,
-            "used": True,
-            "reset_done": {"$ne": True},
-        })
+        otp_doc = await retry_db_read(
+            lambda: db.password_reset_otps.find_one({
+                "email": email,
+                "used": True,
+                "reset_done": {"$ne": True},
+            })
+        )
     except PyMongoError as e:
         logger.error("DB error during reset-password OTP lookup: %s", e)
         raise HTTPException(
@@ -493,7 +513,9 @@ async def reset_password(data: ResetPasswordRequest):
         )
 
     try:
-        user = await db.users.find_one({"email": email})
+        user = await retry_db_read(
+            lambda: db.users.find_one({"email": email})
+        )
     except PyMongoError as e:
         logger.error("DB error fetching user during password reset: %s", e)
         raise HTTPException(

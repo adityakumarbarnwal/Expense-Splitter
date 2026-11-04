@@ -4,6 +4,12 @@
  *
  * withCredentials: true ensures the browser sends the httpOnly `access_token`
  * cookie on every request — JWT is NEVER stored in localStorage.
+ *
+ * Timeout strategy:
+ * - Global default: 30s (covers AI/Gemini endpoints that may be slow)
+ * - Per-route overrides: faster timeouts on lightweight endpoints, explicit
+ *   15s timeout on the dashboard (which does balance calculation per group)
+ *   to surface real hangs without waiting a full 30s.
  */
 
 import axios from 'axios';
@@ -16,7 +22,7 @@ const apiClient = axios.create({
     'Content-Type': 'application/json',
   },
   withCredentials: true, // Send httpOnly auth cookie on every request
-  timeout: 30000, // 30s global default (AI endpoints may be slower)
+  timeout: 30000, // 30s global default (AI/Gemini endpoints may be slower)
 });
 
 /**
@@ -57,7 +63,8 @@ export const authApi = {
   register: (data) => apiClient.post('/auth/register', data).then((r) => r.data),
   login: (data) => apiClient.post('/auth/login', data).then((r) => r.data),
   logout: () => apiClient.post('/auth/logout').then((r) => r.data),
-  me: () => apiClient.get('/auth/me').then((r) => r.data),
+  // /auth/me: JWT decode + one indexed lookup — should be fast; cap at 10s
+  me: () => apiClient.get('/auth/me', { timeout: 10000 }).then((r) => r.data),
   forgotPassword: (data) => apiClient.post('/auth/forgot-password', data).then((r) => r.data),
   verifyOTP: (data) => apiClient.post('/auth/verify-otp', data).then((r) => r.data),
   resetPassword: (data) => apiClient.post('/auth/reset-password', data).then((r) => r.data),
@@ -68,7 +75,9 @@ export const authApi = {
 // ===========================
 
 export const dashboardApi = {
-  get: () => apiClient.get('/dashboard').then((r) => r.data),
+  // Dashboard does balance calculation per group — cap at 15s so we surface
+  // real MongoDB hangs quickly instead of waiting the full 30s global timeout.
+  get: () => apiClient.get('/dashboard', { timeout: 15000 }).then((r) => r.data),
 };
 
 // ===========================
@@ -96,7 +105,7 @@ export const expensesApi = {
   create: (groupId, data) => apiClient.post(`/groups/${groupId}/expenses`, data).then((r) => r.data),
   update: (expenseId, data) => apiClient.patch(`/expenses/${expenseId}`, data).then((r) => r.data),
   delete: (expenseId) => apiClient.delete(`/expenses/${expenseId}`),
-  // AI parse
+  // AI parse — may call Gemini; use the global 30s timeout (no override needed)
   parseAI: (groupId, data) => apiClient.post(`/groups/${groupId}/expenses/parse-ai`, data).then((r) => r.data),
 };
 
@@ -148,6 +157,7 @@ export const aiApi = {
 export const insightsApi = {
   getGroupInsights: (groupId) =>
     apiClient.get(`/groups/${groupId}/insights`).then((r) => r.data),
+  // AI insights calls Gemini — allow up to 25s before giving up
   getAIInsights: (groupId, stats) =>
-    apiClient.post(`/groups/${groupId}/insights/ai`, { stats }).then((r) => r.data),
+    apiClient.post(`/groups/${groupId}/insights/ai`, { stats }, { timeout: 25000 }).then((r) => r.data),
 };

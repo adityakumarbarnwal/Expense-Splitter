@@ -10,7 +10,7 @@ from jose import JWTError, jwt
 from pymongo.errors import PyMongoError
 
 from app.core.config import get_settings
-from app.db.database import get_database
+from app.db.database import get_database, retry_db_read
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -123,14 +123,16 @@ async def get_current_user(
             detail="Invalid token payload.",
         )
 
-    # Fetch user from MongoDB
+    # Fetch user from MongoDB with retry on stale Atlas connections.
     # IMPORTANT: PyMongoError (timeout, network) must NOT become 401.
     # A timeout means the database is temporarily unreachable, not that the
     # token is invalid. Returning 401 on a DB timeout would log the user out
     # on the frontend, losing a valid session unnecessarily.
     db = get_database()
     try:
-        user = await db.users.find_one({"_id": ObjectId(user_id)})
+        user = await retry_db_read(
+            lambda: db.users.find_one({"_id": ObjectId(user_id)})
+        )
     except PyMongoError as e:
         logger.error(
             "Database error while retrieving user %s in get_current_user: %s",
