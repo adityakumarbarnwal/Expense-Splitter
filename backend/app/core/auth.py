@@ -3,9 +3,11 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 import bcrypt
+from bson import ObjectId
 from fastapi import Cookie, Depends, HTTPException, Request, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from jose import JWTError, jwt
+from pymongo.errors import PyMongoError
 
 from app.core.config import get_settings
 from app.db.database import get_database
@@ -88,7 +90,11 @@ async def get_current_user(
     2. access_token cookie (httpOnly cookie set at login)
 
     Returns the user document dict from MongoDB.
-    Raises 401 if not authenticated.
+
+    Error responses:
+    - 401 Unauthorized: no token, invalid JWT, expired JWT, or user not found in DB
+    - 503 Service Unavailable: JWT is valid but MongoDB timed out or is unreachable
+      (this prevents legitimate sessions from being invalidated during DB hiccups)
     """
     token = None
 
@@ -107,6 +113,7 @@ async def get_current_user(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
+    # Decode and validate JWT (raises 401 on invalid/expired token)
     payload = decode_token(token)
     user_id = payload.get("sub")
 
@@ -116,9 +123,25 @@ async def get_current_user(
             detail="Invalid token payload.",
         )
 
-    from bson import ObjectId
+    # Fetch user from MongoDB
+    # IMPORTANT: PyMongoError (timeout, network) must NOT become 401.
+    # A timeout means the database is temporarily unreachable, not that the
+    # token is invalid. Returning 401 on a DB timeout would log the user out
+    # on the frontend, losing a valid session unnecessarily.
     db = get_database()
-    user = await db.users.find_one({"_id": ObjectId(user_id)})
+    try:
+        user = await db.users.find_one({"_id": ObjectId(user_id)})
+    except PyMongoError as e:
+        logger.error(
+            "Database error while retrieving user %s in get_current_user: %s",
+            user_id, e,
+        )
+        # 503 — the token is valid but the DB is temporarily unavailable.
+        # The frontend should retry, not log the user out.
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Database temporarily unavailable. Please try again in a moment.",
+        )
 
     if not user:
         raise HTTPException(

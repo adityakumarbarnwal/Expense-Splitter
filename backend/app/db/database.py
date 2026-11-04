@@ -7,11 +7,15 @@ Provides:
 - Startup/shutdown lifecycle management
 - Index creation
 
-Performance notes:
-- Client is initialized ONCE at startup via connect_db() / lifespan.
-- serverSelectionTimeoutMS reduced to 10s to surface Atlas connectivity
-  problems quickly rather than making every request wait 20+ seconds.
-- socketTimeoutMS guards individual operations against hung connections.
+Connection reliability notes:
+- Atlas M0 free tier drops idle connections after ~60 seconds.
+  maxIdleTimeMS=30000 ensures the driver retires connections before Atlas
+  closes them, preventing "NetworkTimeout on first use after idle" errors.
+- serverSelectionTimeoutMS=10s surfaces Atlas unreachability quickly.
+- socketTimeoutMS=20s gives active operations enough time to complete on
+  the Atlas free tier (which is slower than paid tiers).
+- The client is initialized ONCE at startup; get_database() returns the
+  singleton. Never call AsyncIOMotorClient() per-request.
 """
 
 import logging
@@ -31,7 +35,6 @@ _db: AsyncIOMotorDatabase | None = None
 
 def _mask_uri(uri: str) -> str:
     """Mask credentials in a MongoDB URI for safe logging."""
-    # Replace mongodb+srv://user:pass@ with mongodb+srv://***:***@
     masked = re.sub(r"(mongodb(?:\+srv)?://)([^:]+):([^@]+)@", r"\1***:***@", uri)
     return masked
 
@@ -57,38 +60,51 @@ async def connect_db() -> None:
 
     _client = AsyncIOMotorClient(
         settings.mongodb_uri,
-        # 10s server-selection timeout: surfaces Atlas connectivity problems
-        # quickly instead of silently hanging every request for 20+ seconds.
+        # How long to wait for a suitable server in the topology.
+        # 10s is enough for Atlas; shorter surfaces connectivity problems fast.
         serverSelectionTimeoutMS=10_000,
-        # Individual socket connect and I/O timeouts
+        # Individual socket connect timeout.
         connectTimeoutMS=10_000,
-        socketTimeoutMS=15_000,
-        # Small pool — adequate for a dev/academic app
+        # Individual socket operation timeout.
+        # Atlas M0 is slower than paid tiers — 20s prevents premature timeouts
+        # on legitimate slow operations while still surfacing real hangs.
+        socketTimeoutMS=20_000,
+        # KEY FIX for "NetworkTimeout on first use after idle":
+        # Atlas M0 closes idle connections after ~60s. Setting maxIdleTimeMS
+        # to 30s ensures the driver retires connections before Atlas drops them,
+        # so the next request always gets a fresh connection rather than a stale one.
+        maxIdleTimeMS=30_000,
+        # Small pool — adequate for a dev/academic app.
         maxPoolSize=10,
+        # Minimum connections to keep open — avoids cold-start latency.
+        minPoolSize=1,
+        # Retry reads automatically on a stale connection (Motor/pymongo default).
+        retryReads=True,
+        # Retry writes automatically — safe for insert/update with unique indexes.
+        retryWrites=True,
     )
     _db = _client[settings.mongodb_db_name]
 
-    # Verify connection — use Motor's native async ping command
+    # Verify connection with a ping
     try:
         await _db.command("ping")
         logger.info("MongoDB connected successfully to database '%s'", settings.mongodb_db_name)
     except ServerSelectionTimeoutError as e:
         error_str = str(e)
-        # Diagnose the most common causes and give actionable messages
         if "TLSV1_ALERT_INTERNAL_ERROR" in error_str or "SSL handshake failed" in error_str:
             logger.error(
-                "MongoDB TLS/SSL handshake FAILED — this is almost always caused by one of:\n"
-                "  1. Your IP address is NOT in the MongoDB Atlas Network Access allowlist.\n"
-                "     Go to: Atlas → Network Access → Add IP Address → add your current IP.\n"
+                "MongoDB TLS/SSL handshake FAILED — most likely causes:\n"
+                "  1. Your IP is NOT in the MongoDB Atlas Network Access allowlist.\n"
+                "     Go to: Atlas → Network Access → Add IP Address.\n"
                 "     For development: allow 0.0.0.0/0 (all IPs).\n"
-                "  2. The MongoDB Atlas cluster is paused or deleted.\n"
-                "  3. A firewall/antivirus is intercepting TLS traffic on port 27017.\n"
+                "  2. The Atlas cluster is paused or deleted.\n"
+                "  3. A firewall/antivirus is intercepting TLS on port 27017.\n"
                 "Connection string (masked): %s",
                 masked_uri,
             )
         elif "Authentication failed" in error_str:
             logger.error(
-                "MongoDB authentication FAILED — check your MONGODB_URI username and password.\n"
+                "MongoDB authentication FAILED — check MONGODB_URI username and password.\n"
                 "Connection string (masked): %s",
                 masked_uri,
             )

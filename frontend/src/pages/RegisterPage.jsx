@@ -1,11 +1,24 @@
 import React, { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { Eye, EyeOff, UserPlus, Zap, Shield, Users } from 'lucide-react';
+import { Eye, EyeOff, UserPlus } from 'lucide-react';
 import toast from 'react-hot-toast';
-import { useAuth } from '../contexts/AuthContext';
+import apiClient from '../services/api';
 
+/**
+ * RegisterPage — creates a new account then redirects to /login.
+ *
+ * Uses apiClient directly (not AuthContext.register) so we can:
+ *   1. Redirect to /login on success rather than /dashboard.
+ *   2. Handle 409 Conflict (duplicate email) with a targeted message.
+ *   3. Handle 503 (DB temporarily unavailable) without claiming the
+ *      account definitely does not exist.
+ *
+ * The backend register endpoint:
+ *   - Returns 201 on success (account created, JWT cookie set)
+ *   - Returns 409 on duplicate email
+ *   - Returns 503 on database error (account may or may not have been created)
+ */
 export default function RegisterPage() {
-  const { register } = useAuth();
   const navigate = useNavigate();
 
   const [form, setForm] = useState({ name: '', email: '', password: '', confirmPassword: '' });
@@ -23,12 +36,42 @@ export default function RegisterPage() {
     if (form.password !== form.confirmPassword) {
       toast.error('Passwords do not match'); return;
     }
+
     setSubmitting(true);
     try {
-      await register(form.name.trim(), form.email.trim(), form.password);
-      toast.success('Account created! Welcome to SplitIt 🎉');
-      navigate('/dashboard', { replace: true });
+      await apiClient.post('/auth/register', {
+        name: form.name.trim(),
+        email: form.email.trim(),
+        password: form.password,
+      });
+
+      // Success: account created. Redirect to login so the user signs in normally.
+      toast.success('Account created! Please log in to continue.');
+      navigate('/login', { replace: true });
+
     } catch (err) {
+      const httpStatus = err?.status ?? err?.response?.status ?? null;
+
+      if (httpStatus === 409) {
+        // Duplicate email — account already exists
+        toast.error('An account with this email already exists. Please log in.');
+        navigate('/login', { replace: true });
+        return;
+      }
+
+      if (httpStatus === 503) {
+        // Database temporarily unavailable — account may or may not have been created.
+        // Do NOT let the user retry blindly as that could create a duplicate.
+        toast.error(
+          'The server is temporarily unavailable. ' +
+          'Your account may have been created — try logging in first before registering again.'
+        );
+        // Redirect to login so the user can check whether their account exists
+        navigate('/login', { replace: true });
+        return;
+      }
+
+      // Other errors (validation, network, etc.)
       toast.error(err.message || 'Registration failed. Please try again.');
     } finally {
       setSubmitting(false);

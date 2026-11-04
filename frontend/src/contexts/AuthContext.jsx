@@ -17,10 +17,24 @@ import apiClient from '../services/api';
  */
 const AuthContext = createContext(null);
 
-/** Determine whether an axios error represents a genuine authentication failure. */
+/**
+ * Determine whether an axios error represents a genuine authentication failure
+ * that should clear the frontend session.
+ *
+ * Rules:
+ * - 401 Unauthorized with a token present → genuine auth failure → clear session
+ * - 503 Service Unavailable → DB timeout → keep session, let user retry
+ * - Network errors, timeouts, 5xx → keep session
+ *
+ * We do NOT clear the session on 503 because get_current_user now returns 503
+ * when MongoDB times out (instead of 401), so a temporary DB hiccup must not
+ * log the user out.
+ */
 function isAuthFailure(err) {
-  // A real auth failure returns HTTP 401 from the backend
-  return err?.response?.status === 401;
+  const s = err?.status ?? err?.response?.status ?? null;
+  // Only treat genuine 401 as an auth failure
+  // 503 = DB unavailable (not an auth problem)
+  return s === 401;
 }
 
 export function AuthProvider({ children }) {
